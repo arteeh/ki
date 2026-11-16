@@ -7,10 +7,18 @@ ARG CHROME=157.0.8103.50
 ARG CHROME_PAGE=/apk/google-inc/chrome/google-chrome-157-0-8103-50-release/google-chrome-157-0-8103-50-7-android-apk-download/
 ARG CHROME_SHA256=6123891934761f6dac9e562fb0c0ffc8ff3781c0fa857289d01c9313665e4541
 RUN A="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36" M=https://www.apkmirror.com \
+    && no() { echo "Chrome $CHROME from APKMirror: $1. Find Google's x86_64 APK of a current Chrome on apkmirror.com and set CHROME, CHROME_PAGE (its download page) and CHROME_SHA256 here." >&2; exit 1; } \
     && k=$(curl -fsSA "$A" "$M$CHROME_PAGE" | grep -o 'href="[^"]*/download/?key=[^"]*"' | head -1 | cut -d'"' -f2 | sed 's/&amp;/\&/g') \
+    && { [ -n "$k" ] || no "no download link on $M$CHROME_PAGE (the page is gone, or a challenge page came instead)"; } \
     && d=$(curl -fsSA "$A" "$M$k" | grep -o 'href="[^"]*download.php?[^"]*"' | head -1 | cut -d'"' -f2 | sed 's/&amp;/\&/g') \
-    && curl -fsSLA "$A" -e "$M$k" -o /chrome.apk "$M$d" \
-    && echo "$CHROME_SHA256  /chrome.apk" | sha256sum -c - >/dev/null && echo $CHROME > /chrome.version
+    && { [ -n "$d" ] || no "no file link on $M$k"; } \
+    && { curl -fsSLA "$A" -e "$M$k" -o /chrome.apk "$M$d" || no "the file did not download"; } \
+    && { echo "$CHROME_SHA256  /chrome.apk" | sha256sum -c - >/dev/null 2>&1 || no "the file it sent is not the APK of CHROME_SHA256"; } \
+    && echo $CHROME > /chrome.version
+
+FROM docker.io/library/ubuntu:24.04 AS touch
+COPY touch.c /
+RUN apt-get update && apt-get install -y --no-install-recommends gcc libc6-dev && gcc -static -O2 -o /touch /touch.c
 
 FROM docker.io/library/ubuntu:24.04
 ENV DEBIAN_FRONTEND=noninteractive
@@ -22,14 +30,15 @@ ARG REPO=https://dl.google.com/android/repository
 RUN get() { curl -fsSLo /t.zip "$REPO/$1" && echo "$2  /t.zip" | sha256sum -c - >/dev/null && mkdir -p "$3" && unzip -q /t.zip -d "$3" && rm /t.zip; } \
     && get emulator-linux_x64-16740729.zip cbc7c3cfb83220b8a0f9c513fdab557712e74d339ec19ddffa43f23350ae9bdd /sdk \
     && get platform-tools_r37.0.3-linux.zip 214548146cadb2ca3508143d8a1d4be4c59de5bb837253e3ede89ed74cf450d1 /sdk \
-    && get sys-img/google_apis_playstore/x86_64-36_r07.zip 279c419c2829627e2bb95104f47e6de02ca9d14774506195d5db93d71bd583c8 /sdk/system-images/android-36/google_apis_playstore
+    && get sys-img/google_apis/x86_64-36_r07.zip b1bb0769d0bed7698e61f203d7dc9bf6e7c37cd01a39d0d8788a11186bc78160 /sdk/system-images/android-36/google_apis
 COPY --from=chrome /chrome.apk /chrome.version /
+COPY --from=touch /touch /
 RUN mkdir -p /root/.android/avd/phone.avd \
     && printf 'avd.ini.encoding=UTF-8\npath=/root/.android/avd/phone.avd\ntarget=android-36\n' > /root/.android/avd/phone.ini \
     && printf '%s\n' avd.ini.encoding=UTF-8 abi.type=x86_64 hw.cpu.arch=x86_64 hw.cpu.ncore=4 hw.ramSize=2560 \
-       image.sysdir.1=system-images/android-36/google_apis_playstore/x86_64/ tag.id=google_apis_playstore PlayStore.enabled=yes \
+       image.sysdir.1=system-images/android-36/google_apis/x86_64/ tag.id=google_apis PlayStore.enabled=no \
        hw.lcd.width=1080 hw.lcd.height=2400 hw.lcd.density=420 hw.screen=multi-touch hw.keyboard=yes \
        hw.audioInput=no hw.audioOutput=no hw.gsmModem=no disk.dataPartition.size=6G \
        > /root/.android/avd/phone.avd/config.ini
-COPY start.sh phone /usr/local/bin/
+COPY start.sh phone battery /usr/local/bin/
 CMD ["start.sh"]

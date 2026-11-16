@@ -1,37 +1,47 @@
 #!/usr/bin/env python3
-"""phone touch X,Y@MS ... | phone eval JS | phone open URL
+"""phone touch X,Y@MS ... | phone eval JS | phone open URL | phone trace [dump]
 
 touch: a finger down at the first point (pixels of the 1080x2400 screen),
-on through the next ones at 120 Hz (MS from the touch's start), up at the
-last: a touchscreen of its own (uinput), so all of Android's input and
-Chrome's gestures see it. The phone times the points; busy drawing, it may
-let a few go late at once, which spoils a fling's speed: fling with
-`adb shell input swipe X1 Y1 X2 Y2 MS`.
+on through the next ones at 120 Hz (MS from the touch's start), up 8 ms
+after the last: a touchscreen of its own (uinput), so all of Android's
+input and Chrome's gestures see it. Each event is dated when it is due,
+however late the busy phone gets to it (uinput's own tool dates an event
+when it sends it: a few let go at once flung the tree to its end, at
+times against the finger, or it dates them half a second early, and
+Chrome then scrolls nothing until the finger is up).
 eval: runs JS in Chrome's tab (remote debugging), prints its value as JSON
-(a promise's once settled). open: the tab goes to URL."""
+(a promise's once settled). open: the tab goes to URL.
+trace: from now on the tab logs, per frame, touch and pointer events, the
+tree's two scroll positions, its scroll ends, scrollTo calls with their
+caller and long frames; trace dump prints that log, repeats folded."""
 import base64, json, os, socket, struct, subprocess, sys, urllib.request
+
+TRACE = """(() => {
+  const t = document.querySelector("#tree .bracket"), p = document.querySelector("#tree .cols"), L = window.__trace = { ev: [], t0: performance.now() };
+  const rec = (k, x) => L.ev.push([Math.round(performance.now() - L.t0), k, Math.round(t.scrollLeft * 10) / 10, Math.round(p.scrollTop), x ?? ""]);
+  for (const k of ["pointerdown", "pointermove", "pointerup", "pointercancel"]) addEventListener(k, (e) => rec(k, Math.round(e.clientX) + "," + Math.round(e.clientY)), true);
+  for (const k of ["touchstart", "touchmove", "touchend", "touchcancel"]) addEventListener(k, (e) => rec(k, (e.cancelable ? "" : "uncancelable ") + (e.changedTouches[0] ? Math.round(e.changedTouches[0].clientX) + "," + Math.round(e.changedTouches[0].clientY) : "")), { capture: true, passive: true });
+  for (const k of ["scrollend", "click"]) t.addEventListener(k, () => rec(k), true);
+  p.addEventListener("scrollend", () => rec("scrollend pane"));
+  const to = Element.prototype.scrollTo;
+  Element.prototype.scrollTo = function (...a) { this === t && rec("scrollTo", JSON.stringify(a[0]) + " " + (new Error().stack.split("\\n")[2] ?? "").trim()); return to.apply(this, a); };
+  new PerformanceObserver((l) => l.getEntries().forEach((e) => L.ev.push([Math.round(e.startTime - L.t0), "long frame", Math.round(e.duration), Math.round(e.blockingDuration), e.scripts.map((s) => s.invoker + " " + Math.round(s.duration) + " ms").join("; ")]))).observe({ type: "long-animation-frame" });
+  let last = "";
+  const frame = () => { const k = t.scrollLeft.toFixed(1) + " " + Math.round(p.scrollTop); k === last || ((last = k), rec("frame")); window.__trace === L && requestAnimationFrame(frame); };
+  requestAnimationFrame(frame);
+  return "tracing: time ms, event, tree scrollLeft, columns scrollTop, more";
+})()"""
 
 def touch(points):
     pts = []
     for p in points:
         xy, t = p.split("@") if "@" in p else (p, "0")
         pts.append((*map(float, xy.split(",")), float(t)))
-    axes = [("SLOT", 9), ("TRACKING_ID", 65535), ("POSITION_X", 1079), ("POSITION_Y", 2399), ("PRESSURE", 255), ("TOUCH_MAJOR", 255)]
-    out = [{"command": "register", "name": "ki finger", "vid": 0x18d1, "pid": 0x4ee7, "bus": "virtual", "configuration": [
-        {"type": "UI_SET_EVBIT", "data": ["EV_KEY", "EV_ABS"]}, {"type": "UI_SET_KEYBIT", "data": ["BTN_TOUCH"]},
-        {"type": "UI_SET_ABSBIT", "data": ["ABS_MT_" + a for a, _ in axes]}, {"type": "UI_SET_PROPBIT", "data": ["INPUT_PROP_DIRECT"]}],
-        "abs_info": [{"code": "ABS_MT_" + a, "info": {"value": 0, "minimum": 0, "maximum": m, "fuzz": 0, "flat": 0, "resolution": 0}} for a, m in axes]},
-        {"command": "delay", "duration": 300}]
-    def at(x, y, *more):
-        out.append({"command": "inject", "events": [*more, "EV_ABS", "ABS_MT_POSITION_X", round(x), "EV_ABS", "ABS_MT_POSITION_Y", round(y), "EV_SYN", "SYN_REPORT", 0]})
-    at(pts[0][0], pts[0][1], "EV_ABS", "ABS_MT_TRACKING_ID", 1, "EV_ABS", "ABS_MT_PRESSURE", 60, "EV_ABS", "ABS_MT_TOUCH_MAJOR", 8, "EV_KEY", "BTN_TOUCH", 1)
+    out = [(pts[0][2], *pts[0][:2])]
     for (x0, y0, a), (x1, y1, b) in zip(pts, pts[1:]):
         n = max(1, round((b - a) * .12))
-        for k in range(1, n + 1):
-            out.append({"command": "delay", "duration": round(a + (b - a) * k / n) - round(a + (b - a) * (k - 1) / n)})
-            at(x0 + (x1 - x0) * k / n, y0 + (y1 - y0) * k / n)
-    out += [{"command": "inject", "events": ["EV_ABS", "ABS_MT_TRACKING_ID", -1, "EV_KEY", "BTN_TOUCH", 0, "EV_SYN", "SYN_REPORT", 0]}, {"command": "delay", "duration": 100}]
-    subprocess.run(["adb", "shell", "cat > /data/local/tmp/touch.json && uinput /data/local/tmp/touch.json"], input="\n".join(json.dumps({"id": 1, **o}) for o in out).encode(), check=True)
+        out += [(a + (b - a) * k / n, x0 + (x1 - x0) * k / n, y0 + (y1 - y0) * k / n) for k in range(1, n + 1)]
+    subprocess.run(["adb", "shell", "/data/local/tmp/touch"], input="".join("%.3f %d %d\n" % (t, round(x), round(y)) for t, x, y in out).encode(), check=True)
 
 def page():
     tabs = json.load(urllib.request.urlopen("http://127.0.0.1:9222/json"))
@@ -55,17 +65,36 @@ def page():
                 return msg
     return call
 
+def run(js):
+    res = page()("Runtime.evaluate", expression=js, awaitPromise=True, returnByValue=True).get("result", {})
+    if "exceptionDetails" in res:
+        sys.exit(json.dumps(res["exceptionDetails"]))
+    return res.get("result", {}).get("value")
+
+def dump():
+    last, n = None, 0
+    for e in json.loads(run("JSON.stringify(window.__trace?.ev.sort((a, b) => a[0] - b[0]) ?? [])")):
+        if e[1] == last and e[1] in ("pointermove", "touchmove", "frame"):
+            n += 1
+            held = e
+            continue
+        if n:
+            print("  ... %d more, the last:" % n, *held)
+            n = 0
+        print(*e)
+        last = e[1]
+    if n:
+        print("  ... %d more, the last:" % n, *held)
+
 def main(cmd, *args):
     if cmd == "touch":
         touch(args)
     elif cmd == "eval":
-        r = page()("Runtime.evaluate", expression=" ".join(args), awaitPromise=True, returnByValue=True)
-        res = r.get("result", {})
-        if "exceptionDetails" in res:
-            sys.exit(json.dumps(res["exceptionDetails"]))
-        print(json.dumps(res.get("result", {}).get("value")))
+        print(json.dumps(run(" ".join(args))))
     elif cmd == "open":
         page()("Page.navigate", url=args[0])
+    elif cmd == "trace":
+        dump() if args == ("dump",) else print(run(TRACE))
     else:
         sys.exit(__doc__)
 

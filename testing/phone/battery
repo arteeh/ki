@@ -1,0 +1,124 @@
+#!/usr/bin/env python3
+"""battery vertical|sideways|guard [ROUNDS]: touches on the tree open in the phone's tab, counted
+
+vertical: flings and drags up and down at several levels and scroll positions; any level change fails.
+sideways: flicks, drags held halfway, slow and slanted drags, ROUNDS times (3) from LVL5; a touch fails
+if it ends off a level, or moves a number of levels it must not (a deliberate swipe none).
+guard: ROUNDS times, swipes up or down that start a little sideways, arcs of either thumb, diagonals at
+a level's top and bottom, none of which may change the level; and slanted sideways swipes, which must.
+Each row: the level (vertical) or round, where, the touch, the level before and after, levels moved,
+scrollTop before and after."""
+import json, subprocess, sys
+
+def phone(*a):
+    return subprocess.run(["phone", *a], capture_output=True, text=True, check=True).stdout
+
+def ev(js):
+    return json.loads(phone("eval", js))
+
+STATE = """(() => { const t = document.querySelector("#tree .bracket"), p = t.querySelector(".cols"), h = t.querySelectorAll("h3");
+  const s = h[1].getBoundingClientRect().left - h[0].getBoundingClientRect().left;
+  return { col: t.scrollLeft / s, step: s, top: Math.round(p.scrollTop), cols: h.length } })()"""
+
+# the state once neither scroll position has moved for 10 frames and a second
+# (frames, not time alone: the busy phone can draw nothing for most of a second)
+SETTLE = """new Promise((ok) => { const t = document.querySelector("#tree .bracket"), p = t.querySelector(".cols");
+  let last = "", since = 0, n = 0;
+  const f = (now) => { const k = t.scrollLeft + " " + p.scrollTop; k === last ? n++ : ((last = k), (since = now), (n = 0)); n >= 10 && now - since > 1000 ? ok(%s) : requestAnimationFrame(f); };
+  requestAnimationFrame(f); })""" % STATE
+
+def settle():
+    return ev(SETTLE)
+
+def go(col, where):
+    ev("""(() => { const t = document.querySelector("#tree .bracket"), h = t.querySelectorAll("h3");
+      t.scrollTo({ left: %d * (h[1].getBoundingClientRect().left - h[0].getBoundingClientRect().left), behavior: "instant" }); return 1 })()""" % col)
+    settle()
+    ev("""(() => { const p = document.querySelector("#tree .cols"); p.scrollTop = %s; return 1 })()""" % {"top": "0", "middle": "(p.scrollHeight - p.clientHeight) / 2", "bottom": "p.scrollHeight"}[where])
+    return settle()
+
+def swipe(g):
+    if g[0] == "input":
+        subprocess.run(["adb", "shell", *g], check=True)
+    else:
+        phone(*g)
+
+def arc(x0, y0, x1, y1, bow, ms):
+    return ["%d,%d@%d" % (x0 + (x1 - x0) * k / 8 + bow * 4 * k / 8 * (1 - k / 8), y0 + (y1 - y0) * k / 8, ms * k / 8) for k in range(9)]
+
+def roll(x, y0, dx, y1):
+    return ["%d,%d@0" % (x, y0), "%d,%d@30" % (x + dx, y0 + (5 if y1 > y0 else -5)), "%d,%d@180" % (x + dx + (10 if dx > 0 else -10), y1)]
+
+VERTICAL = {
+    "fling up": "input swipe 540 1900 540 900 150", "fling down": "input swipe 540 900 540 1900 150",
+    "fling up, arc left": "input swipe 600 1900 520 900 150", "fling down, arc right": "input swipe 520 900 600 1900 150",
+    "fling up, slant right": "input swipe 480 1900 600 900 200", "fling down, slant left": "input swipe 600 900 480 1900 200",
+    "slow up": "input swipe 540 1800 570 1200 1000", "slow down": "input swipe 570 1200 540 1800 1000",
+    "flick up": "input swipe 540 1500 530 1300 70", "flick down": "input swipe 530 1300 540 1500 70",
+    "long up 14deg": "input swipe 700 2000 450 700 250", "long down 14deg": "input swipe 450 700 700 2000 250",
+    "drag up, held": "touch 540,1800@0 560,1300@300 560,1300@700", "drag down, held": "touch 560,1300@0 540,1800@300 540,1800@700",
+}
+# levels a touch may move: at least, at most
+SIDEWAYS = {
+    "flick next": ("input swipe 700 1500 300 1520 120", 1, 9), "flick back": ("input swipe 300 1500 700 1480 120", -9, -1),
+    "drag 0.45 held, next": ("touch 800,1500@0 450,1500@400 450,1500@900", 0, 0), "drag 0.45 held, back": ("touch 300,1500@0 650,1500@400 650,1500@900", 0, 0),
+    "drag 0.6 held, next": ("touch 850,1500@0 380,1500@400 380,1500@900", 1, 1), "drag 0.6 held, back": ("touch 250,1500@0 720,1500@400 720,1500@900", -1, -1),
+    "slow drag next": ("input swipe 700 1500 450 1500 600", 0, 1), "slow drag back": ("input swipe 450 1500 700 1500 600", -1, 0),
+    "slanted next": ("input swipe 700 1400 350 1650 250", 1, 9), "slanted back": ("input swipe 350 1650 700 1400 250", -9, -1),
+    "tiny flick next": ("input swipe 600 1500 520 1500 80", 0, 9), "tiny flick back": ("input swipe 520 1500 600 1500 80", -9, 0),
+}
+GUARD = [
+    *[("middle", "%d px %s, then %s" % (d, "left" if s < 0 else "right", u), roll(540, *((1800, s * d, 1000) if u == "up" else (1000, s * d, 1800))), 0, 0)
+      for d in (8, 24, 40, 60) for s in (-1, 1) for u in ("up", "down")],
+    ("middle", "right thumb up, arc left", arc(640, 1950, 560, 950, -120, 200), 0, 0), ("middle", "right thumb down, arc right", arc(560, 950, 640, 1950, 120, 200), 0, 0),
+    ("middle", "left thumb up, arc right", arc(440, 1950, 520, 950, 120, 200), 0, 0), ("middle", "left thumb down, arc left", arc(520, 950, 440, 1950, -120, 200), 0, 0),
+    *[(w, "40deg off %s, leaning %s" % (u, "right" if k > 0 else "left"), ["%d,%d@0" % (540 - k * 250, y0), "%d,%d@180" % (540 + k * 250, y1)], 0, 0)
+      for w in ("top", "bottom") for u, y0, y1 in (("up", 1900, 1300), ("down", 1100, 1700)) for k in (-1, 1)],
+    *[("middle", "%s %s, %ddeg %s" % (n, "next" if k > 0 else "back", a, "up" if u < 0 else "down"), ["%d,%d@0" % (540 + k * 225, 1500), "%d,%d@%d" % (540 - k * 225, 1500 + u * 450 * tan, ms)], *((1, 9) if k > 0 else (-9, -1)))
+      for n, ms in (("flick", 120), ("swipe", 300)) for a, tan in ((20, .36), (30, .58)) for k in (1, -1) for u in (-1, 1)],
+]
+
+def main(kind, rounds="3"):
+    rows, bad = [], 0
+    def row(*r):
+        rows.append(r)
+        print("\t".join(map(str, r)), flush=True)
+    n = ev(STATE)["cols"]
+    if kind == "vertical":
+        for col in [0, 1, 9, n - 1]:
+            for where in ["top", "middle", "bottom"]:
+                for name, g in VERTICAL.items():
+                    a = go(col, where)
+                    swipe(g.split())
+                    b = settle()
+                    moved = round(b["col"] - a["col"])
+                    bad += moved != 0
+                    row(col, where, name, "%.2f" % a["col"], "%.2f" % b["col"], moved, a["top"], b["top"], "LEVEL CHANGED" if moved else "ok")
+    elif kind == "sideways":
+        go(6, "middle")
+        for r in range(int(rounds)):
+            for name, (g, lo, hi) in SIDEWAYS.items():
+                a = settle()
+                swipe(g.split())
+                b = settle()
+                moved, off = round(b["col"] - a["col"]), abs(b["col"] - round(b["col"])) * b["step"] >= 1
+                why = "OFF A LEVEL" if off else "MOVED %+d" % moved if not lo <= moved <= hi else "ok"
+                bad += why != "ok"
+                row(r, "", name, "%.3f" % a["col"], "%.3f" % b["col"], moved, a["top"], b["top"], why)
+                if abs(b["col"] - 6) > 3:
+                    go(6, "middle")
+    elif kind == "guard":
+        for r in range(int(rounds)):
+            for where, name, g, lo, hi in GUARD:
+                a = go(6, where)
+                swipe(["touch", *g])
+                b = settle()
+                moved, off = round(b["col"] - a["col"]), abs(b["col"] - round(b["col"])) * b["step"] >= 1
+                why = "OFF A LEVEL" if off else "MOVED %+d" % moved if not lo <= moved <= hi else "ok"
+                bad += why != "ok"
+                row(r, where, name, "%.3f" % a["col"], "%.3f" % b["col"], moved, a["top"], b["top"], why)
+    else:
+        sys.exit(__doc__)
+    print("%s: %d of %d failed" % (kind, bad, len(rows)), flush=True)
+
+main(*sys.argv[1:]) if len(sys.argv) > 1 else sys.exit(__doc__)

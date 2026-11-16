@@ -6,7 +6,7 @@ type Got = { h: string; t: string; k?: string };
 
 type Card = HTMLDivElement & {
   firstChild: HTMLElement; lastChild: HTMLElement;
-  li: number[]; v: number[]; fresh: boolean; one?: boolean; thin?: boolean; dy: number; eased: ReturnType<typeof setTimeout> | undefined;
+  v: number[]; fresh: boolean; one?: boolean; thin?: boolean; dy: number; eased: ReturnType<typeof setTimeout> | undefined;
 };
 
 type Base = [number, number, number, number, number, number, number];
@@ -99,12 +99,18 @@ $(".view").replaceChildren(...meta.view.flatMap(({ h, t }) => {
   return [a, b];
 }));
 // the columns scroll up and down in a pane of their own, inside the
-// tree's sideways scroll: Chrome on Android ends a fling up or down in a
-// scroller that snaps sideways on another level
-const names = ["ROOT", ...B.map((_, l) => "LVL" + l)], head = document.createElement("div"), pane = document.createElement("div");
+// tree's sideways scroll: in one scroller that did both and snapped
+// sideways, Chrome on Android often ended a swipe up or down let go
+// moving a level over, its fling cut short (seen on an emulator, 43 and
+// 44)
+const names = ["ROOT", ...B.map((_, l) => "LVL" + l)], head = document.createElement("div"), pane = document.createElement("div"), rail = document.createElement("div"), room = document.createElement("div");
 head.className = "heads";
 pane.className = "cols";
 pane.tabIndex = -1;
+// (with a mouse, the pane's own scrollbar would sit past the last
+// column: this one, at the tree's right edge, stands in for it)
+rail.className = "rail";
+rail.append(room);
 head.append(...names.map((name) => {
   const h3 = document.createElement("h3");
   h3.tabIndex = 0;
@@ -116,7 +122,7 @@ pane.append(...names.map(() => {
   col.className = "col";
   return col;
 }));
-tree.replaceChildren(head, pane);
+tree.replaceChildren(head, pane, rail);
 let which: Which = "TREE";
 const heads = [...head.children] as HTMLElement[], cols = [...pane.children] as HTMLElement[], em = parseFloat(getComputedStyle(tree).fontSize), G = .75 * em, Y = .2 * em, HC = 9 * em;
 const HL = 1.5 * 11.5, HM = .7 * 11.5, PB = .7 * em, calm = matchMedia("(prefers-reduced-motion: reduce)");
@@ -182,7 +188,6 @@ const make = (l: number, i: number) => {
   let x = got.get(l + "." + i);
   s.className = seen.has(l + "." + i) ? "s wait in" : "s wait";
   s.tabIndex = 0;
-  s.li = [l, i];
   s.append(document.createElement("h4"), document.createElement("pre"));
   s.firstChild.textContent = l < 0 ? "ROOT #" + i : "LVL" + l + " #" + at(l, i) + (l > 0 ? "-" + (at(l, i) + len(l) - 1) : "");
   if (!has(l, i)) {
@@ -232,8 +237,9 @@ const load = () => {
 const draw = (y = pane.scrollTop, e = 1, old?: Old) => {
   if (signal.aborted) return;
   const p = plan, sh = pane.clientHeight, keep = new Set<string>(), [c0, c1] = near();
+  room.style.height = Y + Math.max(p.total, e < 1 ? old?.total ?? 0 : 0) + 4 * em + "px";
   cols.forEach((col, c) => {
-    col.style.height = Y + Math.max(p.total, e < 1 ? old?.total ?? 0 : 0) + 4 * em + "px";
+    col.style.height = room.style.height;
     const list = p.cards[c];
     for (let x = c < c0 || c > c1 ? list.length : lo(list, (q) => q[9] >= y - sh / 2); x < list.length && list[x][8] <= y + 1.5 * sh; x++) {
       const [l, i, t, h, , , , [up, ...v]] = list[x], k = l + "." + i, w = e < 1 && old !== undefined && (old.get(k) ?? from(old, l, i));
@@ -356,6 +362,8 @@ const pack = () => {
   // (a scroll event coming after the end, from where it ended, is no slide)
   left = tree.scrollLeft;
   goal = null;
+  if (stay !== null && stay !== to + 1) return slide(stay);
+  stay = null;
   if (to === L) return moving || redo();
   shut(true);
   const a = anchor(), old: Old = new Map(), y0 = pane.scrollTop, t0 = performance.now(), me = ++moving, D = calm.matches ? 0 : 300;
@@ -396,7 +404,15 @@ tree.addEventListener("scroll", () => {
   }
   moving || draw();
 }, { signal });
-pane.addEventListener("scroll", () => moving || draw(), { signal });
+// each of the pane and the rail follows the other; not back again, which
+// would stop a smooth scroll the leading one is still in
+let echo = 0;
+const follow = (from: HTMLElement, to: HTMLElement) => Math.abs(from.scrollTop - echo) < 1 || (to.scrollTop = echo = from.scrollTop);
+pane.addEventListener("scroll", () => {
+  follow(pane, rail);
+  moving || draw();
+}, { signal });
+rail.addEventListener("scroll", () => follow(rail, pane), { signal });
 plan = layout(L);
 const show = () => {
   which === "TREE" || shut(true);
@@ -417,15 +433,34 @@ const show = () => {
 };
 addEventListener("resize", show, { signal });
 const slide = (c: number) => {
+  stay = null;
   goal = Math.max(0, Math.min(cols.length - 1, c));
   done();
   tree.scrollTo({ left: goal * step(), behavior: calm.matches ? "instant" : "smooth" });
 };
+// a touch that went more up or down than sideways but moved the tree
+// sideways slides back to the level it started on once its fling has
+// ended (a slide during it stops between two levels): Chrome gives a
+// touch that first goes a little sideways to the sideways scroll, whose
+// fling snaps a level over
+let touch: { x: number; y: number; left: number } | null = null, stay: number | null = null;
+tree.addEventListener("touchstart", (e) => {
+  stay = null;
+  touch = e.touches.length === 1 ? { x: e.touches[0].clientX, y: e.touches[0].clientY, left: tree.scrollLeft } : null;
+}, { passive: true, signal });
+tree.addEventListener("touchend", (e) => {
+  const t = e.changedTouches[0], s = touch;
+  touch = null;
+  if (!s) return;
+  const c = Math.round(s.left / step());
+  Math.abs(s.left - c * step()) < 1 && tree.scrollLeft !== s.left && Math.abs(t.clientY - s.y) > Math.abs(t.clientX - s.x) && (stay = c);
+}, { passive: true, signal });
+tree.addEventListener("touchcancel", () => (touch = null), { passive: true, signal });
 let drag: { x: number; y: number; left: number; id: number; on: boolean } | null = null, dragged = false;
 tree.addEventListener("pointerdown", (e) => {
   dragged = false;
   const bar = e.target === tree ? e.offsetY >= tree.clientHeight : e.target === pane && e.offsetX >= pane.clientWidth;
-  drag = e.pointerType === "mouse" && e.button === 0 && !bar && !(e.target as HTMLElement).closest(".big, h3") ? { x: e.clientX, y: e.clientY, left: tree.scrollLeft, id: e.pointerId, on: false } : null;
+  drag = e.pointerType === "mouse" && e.button === 0 && !bar && !(e.target as HTMLElement).closest(".big, h3, .rail") ? { x: e.clientX, y: e.clientY, left: tree.scrollLeft, id: e.pointerId, on: false } : null;
 }, { signal });
 addEventListener("pointermove", (e: PointerEvent) => {
   if (!drag || e.pointerId !== drag.id) return;
@@ -472,7 +507,13 @@ tree.addEventListener("click", (e) => {
   } else {
     shut();
     go(e.target as HTMLElement);
+    (e.target as HTMLElement).closest("h3") && pane.focus({ preventScroll: true });
   }
+}, { signal });
+head.addEventListener("wheel", (e) => {
+  if (e.ctrlKey || Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return;
+  e.preventDefault();
+  pane.scrollTop += e.deltaY * [1, em, pane.clientHeight][e.deltaMode];
 }, { signal });
 tree.addEventListener("keydown", (e) => {
   const t = e.target as HTMLElement;
