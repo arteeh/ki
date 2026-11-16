@@ -1,7 +1,7 @@
 import * as crypto from "node:crypto";
 import KEY from "./release/ki.pub" with { type: "text" };
 
-export const VERSION = "45.rc1";
+export const VERSION = "45.rc2";
 
 // a release candidate (N.rcM, a pre-release on the rc branch) is only ever
 // installed by hand, with its own release's install line: `ki update`
