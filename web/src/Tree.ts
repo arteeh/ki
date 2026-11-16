@@ -15,7 +15,7 @@ type Q = [...Base, number[], number, number];
 
 type Plan = { level: [number, number][]; A: number[]; P: Float64Array; slot: number[]; find: (m: number) => number; cards: Q[][]; total: number };
 
-type Old = Map<string, number[]> & { total?: number };
+type Old = { plan: Plan; at: Map<string, number[]> };
 
 type Which = "TREE" | "VIEW";
 
@@ -131,10 +131,12 @@ const T = B.length - 1, vt = Math.max(-1, ...V.map((p) => p[0])), seen = new Set
 const has = (l: number, i: number) => (l < 0 ? i < N : B[l][i] === "1"), at = (l: number, i: number) => i * 2 ** Math.max(0, l), len = (l: number) => 2 ** Math.max(0, l);
 const note = document.createElement("p");
 note.className = "note";
-const lo = <T,>(list: ArrayLike<T>, ok: (x: T) => boolean) => { let a = 0, z = list.length; while (a < z) { const m = (a + z) >> 1; ok(list[m]) ? (z = m) : (a = m + 1); } return a; };
+const lo = <T,>(list: ArrayLike<T>, ok: (x: T, j: number) => boolean) => { let a = 0, z = list.length; while (a < z) { const m = (a + z) >> 1; ok(list[m], m) ? (z = m) : (a = m + 1); } return a; };
 const step = () => heads[1].getBoundingClientRect().left - heads[0].getBoundingClientRect().left || 1;
 const got = new Map<string, Got | null>(), shown = new Map<string, Card>();
-let L = vt, plan!: Plan, moving = 0, wait: ReturnType<typeof setTimeout> | undefined, width = 0, started = false, left = 0, done: () => void = () => {}, goal: number | null = null, big: Card | null = null;
+let L = vt, plan!: Plan, moving = 0, wait: ReturnType<typeof setTimeout> | undefined, width = 0, started = false, left = 0, done: () => void = () => {}, goal: number | null = null, big: Card | null = null, down = false;
+// a slide this close to a level, in px, has all but arrived
+const NEAR = 16;
 const height = (_l: number, _i: number) => HC;
 const level_nodes = (L: number) => Array.from({ length: L < 0 ? N : B[L].length }, (_, i) => [L, i] as [number, number]);
 const layout = (L: number): Plan => {
@@ -208,7 +210,8 @@ const fill = (s: Card, x: Got) => {
   s.lastChild.textContent = x.t;
   s.fresh = true;
 };
-const near = () => [Math.floor(tree.scrollLeft / step()) - 1, (tree.scrollLeft + tree.clientWidth) / step()];
+// (a tree at rest a part of a pixel short of its level is on that level)
+const near = () => [Math.floor(tree.scrollLeft / step() + .02) - 1, (tree.scrollLeft + tree.clientWidth) / step()];
 const load = () => {
   const y = pane.scrollTop, sh = pane.clientHeight, [c0, c1] = near(), want = [...shown].filter(([, s]) => !s.thin).map(([k]) => k);
   plan.cards.forEach((list, c) => {
@@ -234,23 +237,35 @@ const load = () => {
     fetch("/api/tree?agent=" + encodeURIComponent(S.agent) + "&get=" + part.join(","), { signal }).then((r) => r.json() as Promise<(Got | null)[]>).then(put, () => put(part.map((k) => ({ h: k, t: "Could not load this: reload the page." }))));
   }
 };
-const draw = (y = pane.scrollTop, e = 1, old?: Old) => {
+// (an ease draws the cards in sight before it too: `old`, at `y0`)
+const draw = (y = pane.scrollTop, old?: Old, y0 = 0) => {
   if (signal.aborted) return;
   const p = plan, sh = pane.clientHeight, keep = new Set<string>(), [c0, c1] = near();
-  room.style.height = Y + Math.max(p.total, e < 1 ? old?.total ?? 0 : 0) + 4 * em + "px";
+  room.style.height = Y + p.total + 4 * em + "px";
   cols.forEach((col, c) => {
     col.style.height = room.style.height;
-    const list = p.cards[c];
-    for (let x = c < c0 || c > c1 ? list.length : lo(list, (q) => q[9] >= y - sh / 2); x < list.length && list[x][8] <= y + 1.5 * sh; x++) {
-      const [l, i, t, h, , , , [up, ...v]] = list[x], k = l + "." + i, w = e < 1 && old !== undefined && (old.get(k) ?? from(old, l, i));
+    const list = p.cards[c], put = (x: number) => {
+      const [l, i, t, h, , , , [up, ...v]] = list[x], k = l + "." + i;
       const s = shown.get(k) ?? make(l, i);
       s.parentNode !== col && col.append(s);
       shown.set(k, s);
       keep.add(k);
-      s.v = [t, h, ...v].map((z, j) => (w ? w[j] + (z - w[j]) * e : z));
+      s.v = [t, h, ...v];
       s.classList.toggle("up", up === 1);
       s.classList.toggle("dn", v[1] >= 0);
       pos(s);
+    };
+    if (c < c0 || c > c1) return;
+    for (let x = lo(list, (q) => q[9] >= y - sh / 2); x < list.length && list[x][8] <= y + 1.5 * sh; x++) {
+      put(x);
+    }
+    // (a card with no height before was not drawn: a part of a card that
+    // showed none of its parts)
+    if (old !== undefined) {
+      const ends = (x: number) => span(was(old, list[x][0], list[x][1]));
+      for (let x = lo(list, (_, j) => ends(j)[1] >= y0); x < list.length && ends(x)[0] <= y0 + sh && was(old, list[x][0], list[x][1])[1] > 0; x++) {
+        put(x);
+      }
     }
   });
   shown.forEach((s, k) => keep.has(k) || (s === big && shut(true), s.remove(), shown.delete(k)));
@@ -290,12 +305,27 @@ const pos = (s: Card) => {
   s.thin = hc < HL;
   s.classList.toggle("thin", s.thin);
 };
-const from = (old: Old, l: number, i: number) => {
-  for (let u = l + 1; u <= T; u++) {
-    const w = old.get(u + "." + Math.floor(at(l, i) / len(u)));
-    if (w) return [w[0] + w[1] / 2, 0, 0, -1, 0];
+// a card's top and bottom, the line to its parts counted
+const span = (v: number[]) => (v[3] < 0 ? [v[0], v[0] + v[1]] : [Math.min(v[0], v[0] + v[2]), Math.max(v[0] + v[1], v[0] + v[2] + v[3] + 1)]);
+// where a card was before an ease: its place in the plan the ease
+// leaves, else the middle of the card it is a part of there, else that
+// plan's end
+const was = (old: Old, l: number, i: number): number[] => {
+  const k = l + "." + i;
+  let w = old.at.get(k);
+  if (w === undefined) {
+    const list = old.plan.cards[l + 1], q = list[lo(list, (q) => q[1] >= i)];
+    if (q !== undefined && q[1] === i) {
+      w = [q[2], q[3], ...q[7].slice(1)];
+    } else if (l < T) {
+      const up = was(old, l + 1, Math.floor(at(l, i) / len(l + 1)));
+      w = [up[0] + up[1] / 2, 0, 0, -1, 0];
+    } else {
+      w = [old.plan.total, 0, 0, -1, 0];
+    }
+    old.at.set(k, w);
   }
-  return null;
+  return w;
 };
 const ease = (s: Card) => {
   s.getBoundingClientRect();
@@ -364,28 +394,35 @@ const pack = () => {
   goal = null;
   if (stay !== null && stay !== to + 1) return slide(stay);
   stay = null;
+  hold(to + 1);
   if (to === L) return moving || redo();
   shut(true);
-  const a = anchor(), old: Old = new Map(), y0 = pane.scrollTop, t0 = performance.now(), me = ++moving, D = calm.matches ? 0 : 300;
-  plan.cards.forEach((list) => list.forEach((q) => old.set(q[0] + "." + q[1], [q[2], q[3], ...q[7].slice(1)])));
-  shown.forEach((s, k) => old.set(k, s.v));
-  old.total = plan.total;
+  done();
+  const a = anchor(), old: Old = { plan, at: new Map() }, y0 = pane.scrollTop, sh = pane.clientHeight, me = ++moving, runs: Animation[] = [];
   L = to;
   plan = layout(L);
-  const y1 = place(a, plan);
-  const frame = (now: number) => {
-    const e = D ? Math.min(1, (now - t0) / D) : 1, f = 1 - (1 - e) ** 3;
-    if (me === moving) {
-      if (e < 1) {
-        draw(y0 + (y1 - y0) * f, f, old);
-        requestAnimationFrame(frame);
-      } else {
-        done();
-      }
-    }
+  draw(place(a, plan), old, y0);
+  // the cards are where they go, and the scroll is: each in sight before
+  // or after moves there from where it was, which the browser draws
+  // without the page (frames the page draws come at half the screen's
+  // rate or under while a touch scrolls and a quarter second after, in
+  // Chrome on Android). A card that grows is under the next, one that
+  // shrinks leaves a gap
+  const y1 = pane.scrollTop;
+  calm.matches || shown.forEach((s, k) => {
+    const [l, i] = k.split(".").map(Number), w = was(old, l, i), y = w[0] - y0, z = s.v[0] - y1;
+    if (Math.abs(y - z) < .5 || ((y + w[1] < 0 || y > sh) && (z + s.v[1] < 0 || z > sh))) return;
+    s.style.zIndex = String(Math.round(s.v[0]));
+    runs.push(s.animate([{ transform: "translateY(" + (y - z) + "px)" }, { transform: "none" }], { duration: 300, easing: "cubic-bezier(.215, .61, .355, 1)" }));
+  });
+  done = () => {
+    if (me !== moving) return;
+    moving = 0;
+    runs.forEach((r) => r.cancel());
+    shown.forEach((s) => (s.style.zIndex = ""));
+    draw();
   };
-  done = () => me === moving && ((moving = 0), draw(y1));
-  requestAnimationFrame(frame);
+  runs.length ? (runs[0].onfinish = () => done()) : done();
 };
 const end = "onscrollend" in tree;
 // (not while a mouse drags it: each step it sets ends a scroll; its
@@ -396,11 +433,18 @@ tree.addEventListener(end ? "scrollend" : "scroll", () => {
   clearTimeout(wait);
   wait = setTimeout(pack, end ? 0 : 150);
 }, { signal });
-// a slide the user starts mid-ease ends the ease where it is
 tree.addEventListener("scroll", () => {
-  if (tree.scrollLeft !== left) {
-    [left, moving] = [tree.scrollLeft, 0];
+  const x = tree.scrollLeft, w = step(), c = Math.round(x / w);
+  if (x !== left) {
     shut(true);
+    // a slide the user starts mid-ease ends the ease: its cards are
+    // where they were going
+    moving && Math.abs(x - (L + 1) * w) > NEAR && done();
+    // a slide let go that has all but arrived at another level has the
+    // level's ease start now: Chrome takes a third of a second over a
+    // snap's last pixels, and ends the scroll only then
+    down || drag?.on || c - 1 === L || Math.abs(x - c * w) > NEAR || Math.abs(x - left) > 4 || pack();
+    left = tree.scrollLeft;
   }
   moving || draw();
 }, { signal });
@@ -426,15 +470,21 @@ const show = () => {
     }
     if (!started) {
       started = true;
+      hold(L + 1);
       tree.scrollLeft = (L + 1) * step();
     }
     redo();
   }
 };
 addEventListener("resize", show, { signal });
+// a slide ends on the level the tree rests on or one beside it, no other
+// level holding it: a hard flick, which Chrome on Android lets pass any
+// number of levels, moves one (scroll-snap-stop: always doesn't stop it)
+const hold = (c: number | null) => heads.forEach((h, j) => h.classList.toggle("far", c !== null && Math.abs(j - c) > 1));
 const slide = (c: number) => {
   stay = null;
   goal = Math.max(0, Math.min(cols.length - 1, c));
+  hold(null);
   done();
   tree.scrollTo({ left: goal * step(), behavior: calm.matches ? "instant" : "smooth" });
 };
@@ -446,16 +496,23 @@ const slide = (c: number) => {
 let touch: { x: number; y: number; left: number } | null = null, stay: number | null = null;
 tree.addEventListener("touchstart", (e) => {
   stay = null;
+  down = true;
+  // (a touch on a tree still sliding: one level from where it is)
+  hold(Math.round(tree.scrollLeft / step()));
   touch = e.touches.length === 1 ? { x: e.touches[0].clientX, y: e.touches[0].clientY, left: tree.scrollLeft } : null;
 }, { passive: true, signal });
 tree.addEventListener("touchend", (e) => {
   const t = e.changedTouches[0], s = touch;
+  down = e.touches.length > 0;
   touch = null;
   if (!s) return;
   const c = Math.round(s.left / step());
   Math.abs(s.left - c * step()) < 1 && tree.scrollLeft !== s.left && Math.abs(t.clientY - s.y) > Math.abs(t.clientX - s.x) && (stay = c);
 }, { passive: true, signal });
-tree.addEventListener("touchcancel", () => (touch = null), { passive: true, signal });
+tree.addEventListener("touchcancel", (e) => {
+  down = e.touches.length > 0;
+  touch = null;
+}, { passive: true, signal });
 let drag: { x: number; y: number; left: number; id: number; on: boolean } | null = null, dragged = false;
 tree.addEventListener("pointerdown", (e) => {
   dragged = false;
