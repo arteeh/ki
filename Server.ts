@@ -793,7 +793,7 @@ export namespace Chat {
       return;
     }
     const meter = Chat.meter(chat);
-    if (meter === null || meter.tokens < meter.window * TALK_OFF_AT) {
+    if (meter === null || meter.tokens < meter.input * TALK_OFF_AT) {
       return Chat.all(chat, Chat.state(chat));
     }
     Chat.talk_off(chat, why);
@@ -819,9 +819,9 @@ export namespace Chat {
     if (mem.talk === null) {
       return null;
     }
-    const window = Pick.window(chat.pick);
+    const input = Pick.input(chat.pick);
     const tokens = mem.used === null ? Chat.guess(chat) : mem.used + Math.ceil(Memory.talk_size(mem, mem.count, mem.used_at) / TOKEN);
-    return { from: mem.talk, used: Math.min(1, tokens / window), tokens, window, model: Chat.model_name(chat), guess: mem.used === null };
+    return { from: mem.talk, used: Math.min(1, tokens / input), tokens, input, model: Chat.model_name(chat), guess: mem.used === null };
   }
 
   export function guess(chat: Chat): number {
@@ -832,7 +832,7 @@ export namespace Chat {
   }
 
   export function room(chat: Chat): number {
-    return Memory.talk_room(Pick.window(chat.pick));
+    return Memory.talk_room(Pick.input(chat.pick));
   }
 
   export function model_name(chat: Chat): string {
@@ -1110,10 +1110,10 @@ export namespace Chat {
     if (pick === null) {
       return null;
     }
-    const window = Pick.window(pick);
+    const input = Pick.input(pick);
     const start = Memory.bytes(Prompts.prompt("sub")) + sub.view.reduce((n, b) => n + Memory.bytes(b.text), 0);
     const tokens = sub.used === null ? Math.ceil((start + sub.bytes) / TOKEN) : sub.used + Math.ceil((sub.bytes - sub.used_at) / TOKEN);
-    return { from: 0, used: Math.min(1, tokens / window), tokens, window, model: pick.model, guess: sub.used === null };
+    return { from: 0, used: Math.min(1, tokens / input), tokens, input, model: pick.model, guess: sub.used === null };
   }
 
   export function sub_row(chat: Chat, sub: Sub<Msg>): SubRow {

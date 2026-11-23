@@ -5,8 +5,9 @@ export type Kind = "prompt-too-long" | "overloaded" | "rate-limit" | "usage-limi
 type At = { model: string; reset: number };
 
 // a failure as the vendor sends it: an HTTP error, or (stream) an SSE stream
-// whose events fail the response; `source` says where its text comes from
-type Case = { status: number; body: (at: At) => object | string; headers?: (at: At) => Record<string, string>; stream?: true; source: string };
+// whose events fail the response, an error event before them if "error";
+// `source` says where its text comes from
+type Case = { status: number; body: (at: At) => object | string; headers?: (at: At) => Record<string, string>; stream?: true | "error"; source: string };
 
 const LOG = "Ki's own server log";
 const CODE = "how Ki reads it (";
@@ -29,7 +30,7 @@ export const CASES: Record<Kind, Record<Vendor, Case>> = {
     "claude-api": { status: 400, body: () => anthropic("invalid_request_error", "prompt is too long: 1048123 tokens > 1000000 maximum"), source: CODE + "Agent.ts TOO_LONG); claude-sub's \"invalid_request: Prompt is too long\" in " + LOG + ", 2026-10-31, is Claude Code's word for it" },
     "claude-sub": { status: 400, body: () => anthropic("invalid_request_error", "prompt is too long: 1048123 tokens > 1000000 maximum"), source: "the same as claude-api; Claude Code turns it into \"invalid_request: Prompt is too long\", seen 13 times in " + LOG + ", 2026-10-31" },
     "openai-api": { status: 400, body: () => openai("invalid_request_error", "context_length_exceeded", "Your input exceeds the context window of this model. Please adjust your input and try again."), source: CODE + "Agent.ts TOO_LONG) and the OpenAI SDK's error shape" },
-    "openai-sub": { status: 200, stream: true, body: failed("context_length_exceeded", "Your input exceeds the context window of this model. Please adjust your input and try again."), source: CODE + "OpenAI.ts step, a response.failed in the stream) and Codex's handling of context_length_exceeded" },
+    "openai-sub": { status: 200, stream: "error", body: failed("context_length_exceeded", "Your input exceeds the context window of this model. Please adjust your input and try again."), source: "chatgpt.com/backend-api/codex/responses, 2026-11-23, gpt-6-luna with 940K tokens of input: response.created, in_progress, metadata, then an error event of type invalid_request_error, param input, and response.failed" },
   },
   overloaded: {
     "claude-api": { status: 502, body: () => "<html>\r\n<head><title>502 Bad Gateway</title></head>\r\n<body>\r\n<center><h1>502 Bad Gateway</h1></center>\r\n</body>\r\n</html>\r\n", headers: () => ({ "content-type": "text/html" }), source: LOG + ", haiku-5.5, 2026-10-14" },

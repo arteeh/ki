@@ -12,8 +12,9 @@ export type Pick = {
 export type Move = "model" | "effort" | "speed";
 
 // efforts: its own levels, as its vendor names them, in its order; effort:
-// the one its vendor uses when a request names none
-export type Model = { label: string; id: string; speeds: string[]; efforts: string[]; effort: string; window: number };
+// the one its vendor uses when a request names none; input: the most
+// tokens a request's input may hold, the room the context meter measures
+export type Model = { label: string; id: string; speeds: string[]; efforts: string[]; effort: string; input: number };
 
 export type Offer = { vendors: Vendor[]; models: string[]; profiles?: Record<string, Fall[]> };
 
@@ -21,33 +22,34 @@ export type Fall = { vendor: Vendor; model: Model; effort?: string; speed?: stri
 
 export const VENDORS: Vendor[] = ["claude-api", "openai-api", "openai-sub", "claude-sub"];
 
-// the windows: Claude's 1M, its models' default (Claude Code's docs:
-// Opus 4.7+, Sonnet 5+, Haiku 5.5 need no [1m]), at the API and on a
-// plan alike; OpenAI's as Codex's models list has them for a ChatGPT
-// plan (context_window; a request can't ask for more), the API's for
-// gpt-6.2 from OpenAI's models pages (1.05M, 922K of it input), the
-// others' taken as the plan's
+// the inputs (#214): Claude's 1M context, its models' default (Claude
+// Code's docs: Opus 4.7+, Sonnet 5+, Haiku 5.5 need no [1m]), Anthropic
+// naming no other most for the input, at the API and on a plan alike
+// (claude-sub took 250K of input for Haiku and refused 1.1M, 23 Nov 2026);
+// OpenAI's 922K of each model's 1.05M context, at the API (its models
+// pages, for Sol and Astra; Terra and Luna refused 930K) and on a ChatGPT
+// plan, whatever Codex's models list says (all four took 921.5K and
+// refused 921.9K, 23 Nov 2026)
 // the efforts: the vendors' models lists (Anthropic's capabilities.effort,
 // Claude Code's supportedEffortLevels, Codex's supported_reasoning_levels)
 // and what a request at each level is answered; defaults by their docs
 // each vendor's models from large to small, as the picker shows them
 const CLAUDE = ["low", "medium", "high", "xhigh", "max"];
-const FABLE : Model = { label: "fable-5.2",  id: "claude-fable-5-2",  speeds: ["slow"], efforts: CLAUDE, effort: "high", window: 1e6 };
-const OPUS  : Model = { label: "opus-5.5",   id: "claude-opus-5-5",   speeds: ["slow", "fast"], efforts: CLAUDE, effort: "medium", window: 1e6 };
-const SONNET: Model = { label: "sonnet-5.5", id: "claude-sonnet-5-5", speeds: ["slow"], efforts: CLAUDE, effort: "high", window: 1e6 };
-const HAIKU : Model = { label: "haiku-5.5",  id: "claude-haiku-5-5",  speeds: ["slow"], efforts: CLAUDE, effort: "medium", window: 1e6 };
+const FABLE : Model = { label: "fable-5.2",  id: "claude-fable-5-2",  speeds: ["slow"], efforts: CLAUDE, effort: "high", input: 1e6 };
+const OPUS  : Model = { label: "opus-5.5",   id: "claude-opus-5-5",   speeds: ["slow", "fast"], efforts: CLAUDE, effort: "medium", input: 1e6 };
+const SONNET: Model = { label: "sonnet-5.5", id: "claude-sonnet-5-5", speeds: ["slow"], efforts: CLAUDE, effort: "high", input: 1e6 };
+const HAIKU : Model = { label: "haiku-5.5",  id: "claude-haiku-5-5",  speeds: ["slow"], efforts: CLAUDE, effort: "medium", input: 1e6 };
 const GPT  = ["low", "medium", "high", "xhigh", "max"];
 const NONE = ["none", ...GPT];
 const OPENAI: Model[] = [
-  { label: "gpt-6.2-astra", id: "gpt-6.2-astra", speeds: ["slow", "fast", "ultrafast"], efforts: GPT, effort: "medium", window: 1.05e6 },
-  { label: "gpt-6.2-sol",   id: "gpt-6.2-sol",   speeds: ["slow", "fast", "ultrafast"], efforts: GPT, effort: "medium", window: 1.05e6 },
-  { label: "gpt-6.1-terra", id: "gpt-6.1-terra", speeds: ["slow", "fast"], efforts: NONE, effort: "medium", window: 500e3 },
-  { label: "gpt-6-luna",    id: "gpt-6-luna",    speeds: ["slow", "fast"], efforts: NONE, effort: "medium", window: 272e3 },
+  { label: "gpt-6.2-astra", id: "gpt-6.2-astra", speeds: ["slow", "fast", "ultrafast"], efforts: GPT, effort: "medium", input: 922e3 },
+  { label: "gpt-6.2-sol",   id: "gpt-6.2-sol",   speeds: ["slow", "fast", "ultrafast"], efforts: GPT, effort: "medium", input: 922e3 },
+  { label: "gpt-6.1-terra", id: "gpt-6.1-terra", speeds: ["slow", "fast"], efforts: NONE, effort: "medium", input: 922e3 },
+  { label: "gpt-6-luna",    id: "gpt-6-luna",    speeds: ["slow", "fast"], efforts: NONE, effort: "medium", input: 922e3 },
 ];
 
 // a ChatGPT plan's (ChatGPT.ts): fast is its priority tier, no ultrafast
-const PLAN_WINDOWS: Record<string, number> = { "gpt-6.2-astra": 272e3, "gpt-6.2-sol": 500e3 };
-const PLAN: Model[] = OPENAI.map((m) => ({ ...m, speeds: m.speeds.filter((s) => s !== "ultrafast"), window: PLAN_WINDOWS[m.label] ?? m.window }));
+const PLAN: Model[] = OPENAI.map((m) => ({ ...m, speeds: m.speeds.filter((s) => s !== "ultrafast") }));
 
 const MODELS: Record<Vendor, Model[]> = {
   "claude-api": [FABLE, OPUS, SONNET, HAIKU],
@@ -187,8 +189,8 @@ export namespace Pick {
   // a profile's is its first model's, which its pick names, as if that
   // were picked alone: a fallback that refuses a turn as too long says so
   // then (#213)
-  export function window(pick: Pick): number {
-    return Pick.model(pick.vendor, pick.model)?.window ?? 272e3;
+  export function input(pick: Pick): number {
+    return Pick.model(pick.vendor, pick.model)?.input ?? 272e3;
   }
 
   export function first(profile: string, offer: Offer): Fall | undefined {

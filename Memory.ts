@@ -112,7 +112,7 @@ const FAILED = new Map<string, number>();
 const TRIES = 5;
 const VIEW_HIGH = 128000;
 
-const TALK_SHARE_OF_WINDOW = 3 / 4;
+const TALK_SHARE = 3 / 4;
 const BLOCK = 4;
 
 const SLOT  = 16;
@@ -1135,9 +1135,8 @@ export namespace Memory {
     return { mark: last, ...(k === back && !last ? { back: true } : {}) };
   }
 
-  export function talk_room(window: number): number {
-    const window_bytes = window * TOKEN;
-    return window_bytes * TALK_SHARE_OF_WINDOW - VIEW_HIGH;
+  export function talk_room(input: number): number {
+    return input * TOKEN * TALK_SHARE - VIEW_HIGH;
   }
 
   export function talk_size(mem: Memory, end = mem.count, from = mem.talk ?? end): number {

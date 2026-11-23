@@ -210,10 +210,12 @@ function failure(vendor: Vendor, model: string, kind: Kind, reset: number): Resp
   const request = claude ? id("req_011C") : id("req_", 32, "0123456789abcdef");
   const headers: Record<string, string> = { [claude ? "request-id" : "x-request-id"]: request, ...limits(vendor), ...c.headers?.(at) };
   const body = c.body(at);
-  if (c.stream === true) {
+  if (c.stream !== undefined) {
+    const said = c.stream === "error" && typeof body !== "string" ? [["error", { type: "error", sequence_number: 1, error: { message: get(body, "message"), type: "invalid_request_error", param: "input", code: get(body, "code") } }] as [string, object]] : [];
     return sse([
       ["response.created", { type: "response.created", sequence_number: 0, response: response(model, "in_progress", [], null) }],
-      ["response.failed", { type: "response.failed", sequence_number: 1, response: { ...response(model, "failed", [], null), error: body } }],
+      ...said,
+      ["response.failed", { type: "response.failed", sequence_number: 1 + said.length, response: { ...response(model, "failed", [], null), error: body } }],
     ], 0, false, headers);
   }
   return typeof body === "string" ? new Response(body, { status: c.status, headers }) : json(c.status, claude ? { ...body, request_id: request } : body, headers);
