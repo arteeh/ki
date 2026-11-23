@@ -1,4 +1,4 @@
-<img width="1266" height="663" alt="ki-screenshot" src="https://github.com/user-attachments/assets/35b5c75d-cae8-4892-8a49-30f25cf53880" />
+<img width="1200" height="750" alt="Ki on a desktop and a phone" src=".github/hero.png" />
 
 Ki is an AI agent with one chat that never ends. There is no "new chat" button: you talk to the same agent for days, weeks, years, and it remembers. Ki is a fork of [Victor Taelin's UniiChat](https://github.com/VictorTaelin/uniichat).
 
