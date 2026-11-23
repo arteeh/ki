@@ -86,6 +86,7 @@ type Tree = {
   busy   : Map<number, number>;
   sides  : Map<number, number>;
   calls  : Map<Call, Sum>;
+  whole  : Map<number, boolean>;
   hold   : Array<string | null>;
   done   : boolean;
   wait   : Set<() => void>;
@@ -147,7 +148,7 @@ export namespace Memory {
     const mem: Memory = {
       dir, fds: new Map(), count: 0, open: 0, pick: null, goal: null, talk: null, leader: false, lines: LINES, talked: new Map(), used: null, used_at: 0, work: [], timers: [], hop: 0, origin: null, queue: [], held: [], nodes: new Map(), ready: [[], []], ends: { main: [0, 0], tree: [0, 0] },
       view: { parts: [], size: 0, batch: false, high: VIEW_HIGH }, seen: { parts: [], size: 0, batch: false, high: config.COMPACTOR_CONTEXT },
-      busy: new Map(), sides: new Map(), calls: new Map(), hold: [null, "paused"], done: false, wait: new Set(), share, acted, again: null,
+      busy: new Map(), sides: new Map(), calls: new Map(), whole: new Map(), hold: [null, "paused"], done: false, wait: new Set(), share, acted, again: null,
     };
     const saved = Memory.saved(dir);
     mem.pick = saved?.pick ?? null;
@@ -1027,6 +1028,28 @@ export namespace Memory {
     return Memory.ref(part) + "|" + Memory.flat(text);
   }
 
+  // a line of the view from its node: a message that is its own line,
+  // nothing left out (no image, page or line of its own), is shown word
+  // for word under its bare id, as zooming it would add nothing (#207)
+  export function entry(mem: Memory, part: Part, node: string): string {
+    return part.l === 0 && Memory.is_whole(mem, part.i, node) ? part.i + "|" + node : Memory.line(part, node);
+  }
+
+  export function is_whole(mem: Memory, i: number, node: string): boolean {
+    let whole = mem.whole.get(i);
+    if (whole === undefined) {
+      const root = Memory.bytes(node) <= NODE ? Memory.message(mem, i) : null;
+      whole = root !== null && Memory.alone(root) && root.line === undefined && node === Memory.show(root);
+      mem.whole.set(i, whole);
+    }
+    return whole;
+  }
+
+  // a message that is all there is to it: no images, not a page of one
+  export function alone(root: Root): boolean {
+    return (root.images ?? []).length === 0 && root.more !== true && root.page !== true;
+  }
+
   // the newest n lines of a memory, oldest first: walking back from its
   // newest message, each the biggest line made that ends where the one
   // after it begins, at most a level above that one; a message with no
@@ -1039,7 +1062,8 @@ export namespace Memory {
         up--;
       }
       const part = { l: up, i: end / 2 ** up - 1 };
-      out.push(Memory.line(part, Memory.node(mem, part) ?? Memory.cut(Memory.flat(Memory.show(Memory.at(mem, end - 1))))));
+      const node = Memory.node(mem, part);
+      out.push(node === null ? Memory.line(part, Memory.cut(Memory.flat(Memory.show(Memory.at(mem, end - 1))))) : Memory.entry(mem, part, node));
       [end, l] = [end - 2 ** up, up];
     }
     return out.reverse();
@@ -1053,7 +1077,7 @@ export namespace Memory {
     let [k, size] = [parts.length, 0];
     for (; k > 0; k--) {
       const part = parts[k - 1];
-      const n = Memory.built(mem, part.l, part.i) ? Memory.bytes(Memory.line(part, Memory.text(mem, part))) + 1 : 0;
+      const n = Memory.built(mem, part.l, part.i) ? Memory.bytes(Memory.entry(mem, part, Memory.text(mem, part))) + 1 : 0;
       if (size + n > most) {
         break;
       }
@@ -1063,7 +1087,7 @@ export namespace Memory {
   }
 
   export function view(mem: Memory, end = mem.count, parts = mem.view.parts, talk: number | null = null, back = -1): Block[] {
-    const lines = talk === null ? Memory.before(parts, end).filter((part) => Memory.built(mem, part.l, part.i)).map((part) => Memory.line(part, Memory.text(mem, part)) + "\n") : Memory.talking(mem, end, parts, talk);
+    const lines = talk === null ? Memory.before(parts, end).filter((part) => Memory.built(mem, part.l, part.i)).map((part) => Memory.entry(mem, part, Memory.text(mem, part)) + "\n") : Memory.talking(mem, end, parts, talk);
     const whole = Math.floor(lines.length / BLOCK);
     const blocks: Block[] = [{ text: "<chat>\n", mark: whole === 0 }];
     for (let k = 0; k < whole; k++) {
@@ -1077,7 +1101,7 @@ export namespace Memory {
     const before = parts.flatMap((part) => Memory.upto(mem, part, Math.min(talk, end)));
     const lines = before.flatMap((part) => {
       const text = Memory.node(mem, part);
-      return text === null ? [] : [Memory.line(part, text) + "\n"];
+      return text === null ? [] : [Memory.entry(mem, part, text) + "\n"];
     });
     const said = Array.from({ length: Math.max(0, end - talk) }, (_, k) => Memory.talk_line(mem, talk + k) + "\n");
     return [...lines, Prompts.prompt("talking", { id: String(talk), Name: mem.name?.() ?? "" }) + "\n", ...said];
@@ -1101,7 +1125,8 @@ export namespace Memory {
   export function talk_line(mem: Memory, i: number): string {
     const root = Memory.at(mem, i);
     const part = { l: 0, i };
-    return Memory.said(root) ? Memory.ref(part) + "|" + Memory.show(root).replace(/<\/chat>/gi, "<\\/chat>") : Memory.line(part, Memory.node(mem, part) ?? Prompts.prompt("not-summarized"));
+    const node = Memory.node(mem, part);
+    return Memory.said(root) ? (Memory.alone(root) ? String(i) : Memory.ref(part)) + "|" + Memory.show(root).replace(/<\/chat>/gi, "<\\/chat>") : node === null ? Memory.line(part, Prompts.prompt("not-summarized")) : Memory.entry(mem, part, node);
   }
 
   export function cache_marks(k: number, whole: number, back: number): { mark: boolean; back?: true } {
@@ -1157,9 +1182,12 @@ export namespace Memory {
     }
     if (root !== null) {
       const images = at === 0 ? root.images : undefined;
-      return id + "+0|" + Memory.show({ ...root, text: clip_page(root.text, at), images });
+      return id + "|" + Memory.show({ ...root, text: clip_page(root.text, at), images });
     }
-    return Memory.halves(part).map((half) => Memory.line(half, Memory.node(mem, half) ?? Prompts.prompt("not-summarized"))).join("\n");
+    return Memory.halves(part).map((half) => {
+      const node = Memory.node(mem, half);
+      return node === null ? Memory.line(half, Prompts.prompt("not-summarized")) : Memory.entry(mem, half, node);
+    }).join("\n");
   }
 
   export function date(mem: Memory, id: number): string {

@@ -20,9 +20,10 @@ The agent's memory: its whole chat with the user, oldest first, inside <chat>
 tags, as one-line summaries:
 
   id+n|text   the n messages from id on, summarized (newlines as spaces)
+  id|text     one whole message, word for word: zooming it adds nothing
 
-No message appears in full, not even the last ones. A text too long for one
-message is split over several in a row.
+Only an id|text line shows a message in full. A text too long for one message
+is split over several in a row.
 
 Each message has a kind: user (the user's words), reply (the agent's replies),
 tool (its tool calls, each with its result after it), echo (a tool result

@@ -9,6 +9,7 @@ The agent's memory: the whole chat between it and the user, oldest first, inside
 <chat> tags, as one-line summaries:
 
   id+n|text   the n messages from id on, summarized (newlines as spaces)
+  id|text     one whole message, word for word
 
 Each message has a kind:
 - user: the user's words

@@ -89,7 +89,7 @@ const SESSION = "mcp-session-id";
 const LOOK = 3000;
 
 const OWN: Spec[] = [
-  spec("zoom", "Open the line id+n of the view into the two lines of n/2 under it; n = 1 gives the message whole. A long text comes in pages from character at, saying where to go on. With agent, a line of that agent's memory, by its name; a subagent's name gives its whole chat (id: 0).", { id: INT, n: INT, at: INT, agent: STR }, ["id"]),
+  spec("zoom", "Open the line id+n of the view into the two lines of n/2 under it; n = 1 gives the message whole. A long text comes in pages from character at, saying where to go on. Omit `agent` to read your own memory. Give a name only to read another agent's memory (a line of it, by the agent's name) or a subagent's chat (its name, id: 0, gives its whole chat).", { id: INT, n: INT, at: INT, agent: STR }, ["id"]),
   spec("date", "The date and time of message id.", { id: INT }, ["id"]),
 ];
 // built at each listing: spawn names the models offered now, which
@@ -323,15 +323,17 @@ export namespace Tools {
     const mem = seat.mem;
     switch (name) {
       case "zoom": {
-        const log = args.agent === undefined ? null : seat.subs?.show(text_of(args.agent)) ?? null;
+        // a blank name is the caller's own memory, as a model may send one
+        // for an argument it leaves out (#207)
+        const name = args.agent === undefined || args.agent === null ? "" : text_of(args.agent).trim();
+        const log = name === "" ? null : seat.subs?.show(name) ?? null;
         if (log !== null) {
           return { text: clip_page(log, Number(args.at ?? 0)), fail: false };
         }
-        const other = args.agent !== undefined;
-        const them = other ? Team.by_name(text_of(args.agent)) : null;
-        const there = !other ? seat : them === null || them.archived !== 0 ? undefined : Tools.seat(tools, them.id);
+        const them = name === "" ? null : Team.by_name(name);
+        const there = name === "" ? seat : them === null || them.archived !== 0 ? undefined : Tools.seat(tools, them.id);
         if (there === undefined) {
-          return { text: "No agent " + text_of(args.agent) + " in the team.", fail: true };
+          return { text: "No agent " + name + " in the team.", fail: true };
         }
         const id = Number(args.id);
         const n = Number(args.n ?? 1);

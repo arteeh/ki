@@ -23,6 +23,11 @@ const MARK = { mode: "explicit" };
 
 const TRANSCRIBER = "gpt-transcribe";
 
+// Ki's tools whose optional arguments stay optional: OpenAI makes a tool
+// with no strict strict, every argument required, and a model then fills
+// one it would leave out (#207)
+const LOOSE = ["zoom"];
+
 export namespace OpenAI {
 
   export function body(ask: Ask, items: Item[], tools: Tool[], max: number) {
@@ -30,7 +35,7 @@ export namespace OpenAI {
     if (!tier) {
       throw new Error("OpenAI has no speed " + ask.speed);
     }
-    const defs: object[] = tools.map((t) => ({ type: "function", name: t.name, description: t.info, parameters: t.schema }));
+    const defs: object[] = tools.map((t) => ({ type: "function", name: t.name, description: t.info, parameters: t.schema, ...(LOOSE.includes(t.name) ? { strict: false } : {}) }));
     if (ask.searches > 0) {
       defs.push({ type: "web_search" });
     }
