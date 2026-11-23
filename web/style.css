@@ -62,6 +62,12 @@ a { color: inherit; text-underline-offset: 3px; }
 body { text-wrap: balance; }
 .msg:not(.note) { text-wrap: pretty; }
 textarea { text-wrap: wrap; }
+/* a hover's background fades in and out (#208): a touch's press, keyboard
+   focus and reduced motion change it at once */
+@media (hover: hover) and (prefers-reduced-motion: no-preference) {
+  :where(button, header a, .chip, .mate, .msg.said summary, .msg.tool.line > summary, .block, .msg a.file, [popover] > a, #tree .tab) { transition: background-color .12s; }
+  :focus-visible { transition: none; }
+}
 
 body.guest :is(.attach, .mic, #pick, #list, header > *) { display: none !important; }
 body.solo main { width: min(420px, 100% - 48px); margin: 18vh auto; text-align: center; }
