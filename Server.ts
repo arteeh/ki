@@ -819,7 +819,7 @@ export namespace Chat {
     if (mem.talk === null) {
       return null;
     }
-    const window = Pick.window(chat.pick, config.OFFER);
+    const window = Pick.window(chat.pick);
     const tokens = mem.used === null ? Chat.guess(chat) : mem.used + Math.ceil(Memory.talk_size(mem, mem.count, mem.used_at) / TOKEN);
     return { from: mem.talk, used: Math.min(1, tokens / window), tokens, window, model: Chat.model_name(chat), guess: mem.used === null };
   }
@@ -832,7 +832,7 @@ export namespace Chat {
   }
 
   export function room(chat: Chat): number {
-    return Memory.talk_room(Pick.window(chat.pick, config.OFFER));
+    return Memory.talk_room(Pick.window(chat.pick));
   }
 
   export function model_name(chat: Chat): string {
@@ -1110,7 +1110,7 @@ export namespace Chat {
     if (pick === null) {
       return null;
     }
-    const window = Pick.window(pick, config.OFFER);
+    const window = Pick.window(pick);
     const start = Memory.bytes(Prompts.prompt("sub")) + sub.view.reduce((n, b) => n + Memory.bytes(b.text), 0);
     const tokens = sub.used === null ? Math.ceil((start + sub.bytes) / TOKEN) : sub.used + Math.ceil((sub.bytes - sub.used_at) / TOKEN);
     return { from: 0, used: Math.min(1, tokens / window), tokens, window, model: pick.model, guess: sub.used === null };

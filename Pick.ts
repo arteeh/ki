@@ -184,10 +184,11 @@ export namespace Pick {
     return { vendor, model: label, effort, speed };
   }
 
-  export function window(pick: Pick, offer: Offer): number {
-    const falls = pick.profile === undefined ? [] : offer.profiles?.[pick.profile] ?? [];
-    const models = [Pick.model(pick.vendor, pick.model), ...falls.map((f) => f.model)];
-    return Math.min(...models.map((m) => m?.window ?? 272e3));
+  // a profile's is its first model's, which its pick names, as if that
+  // were picked alone: a fallback that refuses a turn as too long says so
+  // then (#213)
+  export function window(pick: Pick): number {
+    return Pick.model(pick.vendor, pick.model)?.window ?? 272e3;
   }
 
   export function first(profile: string, offer: Offer): Fall | undefined {
