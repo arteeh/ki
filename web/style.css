@@ -47,6 +47,7 @@
   --col: 800px;
   --head: 57px;
   --row: 33px;
+  --line: 12.5px/1.5;
 }
 
 * { box-sizing: border-box; }
@@ -163,7 +164,7 @@ body.subpage header > .title { display: block; }
 @keyframes caret { 50% { opacity: 0; } }
 /* one box for every tool's icon, wider than an emoji, centring it at the
    row's middle (#191); the dots and the ring take its place */
-.msg.tool.line > summary > .ic { flex: none; display: flex; justify-content: center; align-items: center; align-self: center; width: 1.5em; height: 1.5em; position: relative; }
+:is(.msg.tool.line > summary, .block:not(.one)) > .ic { flex: none; display: flex; justify-content: center; align-items: center; align-self: center; width: 1.5em; height: 1.5em; position: relative; }
 .msg.tool.line:is(.typing, .running) > summary > .ic { visibility: hidden; }
 .msg.tool.line.typing > summary > .ic::after { visibility: visible; content: ""; position: absolute; inset: 0; padding-left: calc((1.5em - 2ch) / 2); color: var(--soft); animation: typed 1.2s steps(1) infinite; }
 @keyframes typed { 0% { content: ""; } 33.333% { content: "."; } 66.667% { content: ".."; } }
@@ -184,7 +185,11 @@ body.subpage header > .title { display: block; }
 #log.still :is(.msg.writing > :last-child, .msg.tool.line.running > summary > .ic)::after { animation: none; }
 #log.still :is(.cap.think, .msg.tool.line.typing > summary > .ic)::after { animation: none; content: "…"; }
 .msg.tool.line { padding: 0; background: none; }
-.msg.tool.line > summary { display: flex; align-items: baseline; gap: 6px; min-height: var(--row); padding: calc((var(--row) - 1.5em) / 2) 12px; border-radius: 10px; background: var(--block); cursor: pointer; list-style: none; white-space: nowrap; }
+/* a collapsed memory fold is a row of a collapsed tool call's height, size
+   and colour, in its own typeface (#209) */
+:is(.msg.tool.line > summary, .block:not(.one)) { display: flex; align-items: baseline; gap: 6px; min-height: var(--row); padding: calc((var(--row) - 1.5em) / 2) 12px; border-radius: 10px; background: var(--block); cursor: pointer; list-style: none; white-space: nowrap; }
+.block:not(.one) { font: var(--line) var(--serif); color: var(--mid); }
+.block:not(.one) > .sum { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .msg.tool.line > summary::-webkit-details-marker { display: none; }
 @media (hover: hover) { .msg.tool.line > summary:hover { background: var(--hover); } } @media (hover: none) { .msg.tool.line > summary:active { background: var(--hover); } }
 .msg.tool.line .arg { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
@@ -364,12 +369,10 @@ header .imping { display: flex; flex-direction: column; justify-content: center;
 #log > * > * { margin-block: 14px; }
 .cap { font: italic 14.5px var(--serif); color: var(--mid); }
 
-.block { display: flex; gap: 12px; padding: 10px 14px; background: var(--block); border-radius: 10px; font: 15px/1.55 var(--serif); cursor: pointer; overflow-wrap: anywhere; }
-@media (hover: hover) { .block:hover { background: var(--hover); } } @media (hover: none) { .block:active { background: var(--hover); } }
-.block .lv { flex: none; min-width: 38px; font: 600 11.5px/24px var(--sans); color: var(--mid); }
-.block > div { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.block.one { cursor: default; color: var(--mid); }
-@media (hover: hover) { .block.one:hover { background: var(--block); } } @media (hover: none) { .block.one:active { background: var(--block); } }
+.block.one { display: flex; padding: 10px 14px; background: var(--block); border-radius: 10px; font: 15px/1.55 var(--serif); color: var(--mid); overflow-wrap: anywhere; }
+.block.one > div { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (hover: hover) { .block:not(.one):hover { background: var(--hover); } } @media (hover: none) { .block:not(.one):active { background: var(--hover); } }
+.block > .lv { flex: none; }
 
 .open { border: 1.25px solid var(--frame); border-radius: 12px; padding: 0 10px 10px; }
 .open > * { margin: 10px 0 0; }
@@ -407,7 +410,7 @@ header .imping { display: flex; flex-direction: column; justify-content: center;
 .msg.note { color: var(--mid); }
 .msg.reply { font: 16px/1.55 var(--sans); }
 .msg.user p, .msg.work p, .msg.echo p { white-space: pre-wrap; }
-.msg.tool, .msg.echo { font: 12.5px/1.5 var(--mono); }
+.msg.tool, .msg.echo { font: var(--line) var(--mono); }
 .msg.tool { padding: 9px 14px; background: var(--block); border-radius: 10px; }
 .msg.note[data-who]::before { content: attr(data-who); display: block; font: 700 12px/1.5 var(--sans); font-style: normal; color: var(--soft); }
 .msg.echo[data-who]::before { content: attr(data-who); display: block; margin: 6px 0 -2px; font: 600 11px var(--sans); color: var(--mid); }

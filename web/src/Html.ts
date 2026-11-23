@@ -148,11 +148,13 @@ export function row_html(row: View.Row): string {
 function row_make(row: View.Row): string {
   switch (row.$) {
     case "Sum": {
-      // a fold is one line; one message's line (a team copy) opens nothing
-      const fold = row.n > 1;
-      const open = fold ? act_html({ $: "Open", id: row.id, n: row.n }) : "";
-      const lv = fold ? `<span class="lv">${row.msgs}x</span>` : "";
-      return `<div class="block${fold ? "" : " one"}"${open} data-a="${row.id}">${lv}<div>${esc(row.text)}</div></div>`;
+      // a fold is one line, as a tool call's (#209); one message's line (a
+      // team copy) opens nothing
+      if (row.n === 1) {
+        return `<div class="block one" data-a="${row.id}"><div>${esc(row.text)}</div></div>`;
+      }
+      const open = act_html({ $: "Open", id: row.id, n: row.n });
+      return `<div class="block"${open} data-a="${row.id}"><span class="ic" aria-hidden="true">🧠</span><i class="lv" title="${row.msgs} messages">${row.msgs}x</i><span class="sum">${esc(row.text)}</span></div>`;
     }
     case "Box": {
       const shut = act_html({ $: "Shut", id: row.id, n: row.n });
