@@ -101,7 +101,7 @@ export function names_set(team: View.Mate[], here: string, sub: string | null): 
 }
 
 // a message's markup by its parts, the chat changing only those that
-// changed (main.ts markup, #192): its copy button, each block, its pictures
+// changed (main.ts markup, #192): each block, its pictures
 const PARTS = new Map<string, { shell: string; kids: string[] }>();
 const PARTS_KEPT = 64;
 
@@ -161,10 +161,6 @@ function row_make(row: View.Row): string {
     }
     case "Msg": {
       const at = row.id === null ? "" : ` data-a="${row.id}"`;
-      const whole = row.call === null ? row.text : Call.call_text(row.call);
-      // a reply being written copies its text when pressed: in its markup,
-      // its whole text again at each piece of it would cost as much again
-      const copy = row.writing === true ? `<button class="copy" data-copy="" data-live title="Copy">${SHEETS}</button>` : copy_html(whole);
       const blocks = row.call === null ? row.body.map(block_kept) : [];
       const body = row.call === null ? blocks.join("") : call_html(row.call);
       const pics = images_html(row.images);
@@ -176,11 +172,11 @@ function row_make(row: View.Row): string {
         const mate = TEAM.get(row.from);
         const gist = Md.md_flat(Call.report_read(row.text)?.text ?? row.text);
         const head = `<summary>${face_html(mate?.picture ?? "")}<b>${esc(mate?.name ?? row.who)}</b><span>${esc(gist)}</span></summary>`;
-        return `<div class="msg ${row.kind} said${queued}"${at}><details>${head}${copy}${body}${pics}</details></div>`;
+        return `<div class="msg ${row.kind} said${queued}"${at}><details>${head}${body}${pics}</details></div>`;
       }
       const open = `<div class="msg ${row.kind}${queued}"${at}${who}>`;
-      const html = `${open}${copy}${fold}${pics}</div>`;
-      return tall || row.call !== null ? html : parts_keep(html, open + "</div>", [copy, ...blocks, ...(pics === "" ? [] : [pics])]);
+      const html = `${open}${fold}${pics}</div>`;
+      return tall || row.call !== null ? html : parts_keep(html, open + "</div>", [...blocks, ...(pics === "" ? [] : [pics])]);
     }
     case "Cap": {
       if (row.wait === true) {
@@ -561,7 +557,7 @@ function block_html(b: Md.Block): string {
         const cells = row.map((cell, c) => `<${tag}${b.a[c] ? ` style="text-align:${b.a[c]}"` : ""}>${spans_html(cell)}</${tag}>`);
         return `<tr>${cells.join("")}</tr>`;
       });
-      return `<table>${rows.join("")}</table>`;
+      return `<div class="table"><table>${rows.join("")}</table></div>`;
     }
     case "Diff": {
       return diff_html(b.k, b.x);

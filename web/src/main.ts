@@ -614,7 +614,7 @@ function click(ev: MouseEvent): void {
   }
   el.closest<HTMLElement>(".choices")?.hidePopover();
   const { act: a, go: path } = el.dataset;
-  const text = el.dataset.live === undefined ? el.dataset.copy : View.view_writing(v);
+  const text = el.dataset.copy;
   if (el.classList.contains("imp")) {
     void import_open(FORM.exec(location.pathname)?.[2] ?? v.agent, false);
     return;
@@ -1208,7 +1208,7 @@ function key_of(open: string, own = true): string {
 // chat (spares not null) one that changed keeps its element, the one of its
 // message, else the next of its kind with no message yet, spares too (a row
 // moving from the live tail into the chat), and only what changed in it
-// changes, so a selection or a hovered copy button in it holds (#192)
+// changes, so a selection in it holds (#192)
 function markup(el: Element, htmls: string[], spares: Element[] | null = null): void {
   const had = new Map<string | undefined, Element[]>();
   for (const child of el.children) {

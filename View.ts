@@ -787,11 +787,6 @@ function thought_last(v: View): boolean {
   return last !== undefined && v.minds.has(last[0] + last[1] - 1);
 }
 
-// the text of the reply being written, all of it so far (#192)
-export function view_writing(v: View): string {
-  return (v.page?.live ?? v.live).findLast((l) => l.kind === "reply")?.text ?? "";
-}
-
 // the rows of the messages that wait in the tail, queued or unsent, made
 // once while they wait, so each is parsed and drawn once, not at each paint
 let WAITS = new Map<string, Row[]>();
