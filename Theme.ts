@@ -17,7 +17,6 @@ const KIND: Record<Kind, Look> = {
 
 const TOOL: Record<string, string> = {
   zoom       : "🔍",
-  date       : "📅",
   shell      : "⌨️",
   read       : "📖",
   write      : "📄",

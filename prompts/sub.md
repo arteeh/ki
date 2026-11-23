@@ -34,10 +34,10 @@ chat's), note (the app's own notes). The summaries form a binary tree: recent
 lines cover one message each, older lines cover more. A message not summarized
 yet shows as "(not summarized yet: zoom it)".
 
-zoom(id, n) opens line id+n into the two lines it was made from; zoom(id, 1)
-gives message id whole, with the images its `[image <file>]` lines name;
-date(id) gives the date and time of message id. Zoom whenever a summary only
-mentions something you need, before you act, guess or ask.
+zoom(id, n) opens line id+n into the two lines it was made from, each with
+when its messages were sent; zoom(id, 1) gives message id whole, with the
+images its `[image <file>]` lines name and when it was sent. Zoom whenever a
+summary only mentions something you need, before you act, guess or ask.
 
 # Work
 

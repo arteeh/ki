@@ -1024,15 +1024,16 @@ export namespace Memory {
     return part.i * 2 ** part.l + "+" + 2 ** part.l;
   }
 
-  export function line(part: Part, text: string): string {
-    return Memory.ref(part) + "|" + Memory.flat(text);
+  // at: what goes between the id and the text, a zoom's dates (#217)
+  export function line(part: Part, text: string, at = ""): string {
+    return Memory.ref(part) + at + "|" + Memory.flat(text);
   }
 
   // a line of the view from its node: a message that is its own line,
   // nothing left out (no image, page or line of its own), is shown word
   // for word under its bare id, as zooming it would add nothing (#207)
-  export function entry(mem: Memory, part: Part, node: string): string {
-    return part.l === 0 && Memory.is_whole(mem, part.i, node) ? part.i + "|" + node : Memory.line(part, node);
+  export function entry(mem: Memory, part: Part, node: string, at = ""): string {
+    return part.l === 0 && Memory.is_whole(mem, part.i, node) ? part.i + at + "|" + node : Memory.line(part, node, at);
   }
 
   export function is_whole(mem: Memory, i: number, node: string): boolean {
@@ -1182,17 +1183,30 @@ export namespace Memory {
     }
     if (root !== null) {
       const images = at === 0 ? root.images : undefined;
-      return id + "|" + Memory.show({ ...root, text: clip_page(root.text, at), images });
+      return id + " · " + Memory.when(root.date) + "|" + Memory.show({ ...root, text: clip_page(root.text, at), images });
     }
     return Memory.halves(part).map((half) => {
       const node = Memory.node(mem, half);
-      return node === null ? Memory.line(half, Prompts.prompt("not-summarized")) : Memory.entry(mem, half, node);
+      const at = " · " + Memory.span_when(mem, half);
+      return node === null ? Memory.line(half, Prompts.prompt("not-summarized"), at) : Memory.entry(mem, half, node, at);
     }).join("\n");
   }
 
-  export function date(mem: Memory, id: number): string {
-    const root = Memory.message(mem, id);
-    return root === null ? "No message " + id + "." : new Date(root.date).toLocaleString("sv-SE");
+  export function span_when(mem: Memory, part: Part): string {
+    const [a, b] = Memory.span(part);
+    return Memory.when(Memory.at(mem, a).date, Memory.at(mem, b).date);
+  }
+
+  // when messages were sent: one's minute, or the first's and the last's,
+  // in the server's time zone and its offset from UTC, as Ki keeps no
+  // user's zone (#217)
+  export function when(a: string, b = a): string {
+    const [x, y] = [stamp(a), stamp(b)];
+    if (x.day === y.day && x.time === y.time && x.zone === y.zone) {
+      return x.day + " " + x.time + " " + x.zone;
+    }
+    const end = (x.day === y.day ? "" : y.day + " ") + y.time + " " + y.zone;
+    return x.day + " " + x.time + (x.zone === y.zone ? "" : " " + x.zone) + " – " + end;
   }
 
   export function turn(mem: Memory): number {
@@ -1221,7 +1235,7 @@ export namespace Memory {
       return null;
     }
     const [a, b] = part === null ? [i, i] : Memory.span(part);
-    const when = Memory.date(mem, a) + (a === b ? "" : " – " + Memory.date(mem, b));
+    const when = Memory.when(Memory.at(mem, a).date, Memory.at(mem, b).date);
     const head = root === null ? ["LVL" + l + " #" + a + (a === b ? "" : "-" + b), when, Memory.bytes(text) + " B"] : ["ROOT #" + i, when, root.kind, root.size + " B"];
     return { h: head.join(" · "), t: text, k: root?.kind };
   }
@@ -1325,8 +1339,17 @@ export namespace Memory {
     return (fs.existsSync(mem.dir + AGENTS) ? fs.readdirSync(mem.dir + AGENTS) : []).filter((f) => /^[A-Za-z]+\.jsonl$/.test(f)).map((f) => f.slice(0, -".jsonl".length));
   }
 
-  export function agent_show(mem: Memory, name: string): string {
-    return Memory.agent(mem, name)?.map((root) => root.i + "|" + Memory.show(root)).join("\n\n") ?? "No agent " + name + ".";
+  // dated: each message with when it was sent, as a zoom shows it (#217)
+  export function agent_show(mem: Memory, name: string, dated = false): string {
+    return Memory.agent(mem, name)?.map((root) => root.i + (dated ? " · " + Memory.when(root.date) : "") + "|" + Memory.show(root)).join("\n\n") ?? "No agent " + name + ".";
   }
 
+}
+
+function stamp(iso: string): { day: string; time: string; zone: string } {
+  const d = new Date(iso);
+  const two = (n: number) => String(n).padStart(2, "0");
+  const off = -d.getTimezoneOffset();
+  const zone = (off < 0 ? "-" : "+") + two(Math.floor(Math.abs(off) / 60)) + ":" + two(Math.abs(off) % 60);
+  return { day: d.getFullYear() + "-" + two(d.getMonth() + 1) + "-" + two(d.getDate()), time: two(d.getHours()) + ":" + two(d.getMinutes()), zone };
 }

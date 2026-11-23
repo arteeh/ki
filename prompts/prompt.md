@@ -36,9 +36,9 @@ message not summarized yet shows as "(not summarized yet: zoom it)". A text too
 long for one message is split over several in a row.
 
 Tools:
-- zoom(id, n) opens line id+n into the two lines it was made from;
-- zoom(id, 1) gives message id whole, with its images
-- date(id) gives the date and time of message id
+- zoom(id, n) opens line id+n into the two lines it was made from, each
+  with when its messages were sent;
+- zoom(id, 1) gives message id whole, with its images and when it was sent
 
 # Turns
 

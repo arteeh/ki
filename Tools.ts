@@ -89,8 +89,7 @@ const SESSION = "mcp-session-id";
 const LOOK = 3000;
 
 const OWN: Spec[] = [
-  spec("zoom", "Open the line id+n of the view into the two lines of n/2 under it; n = 1 gives the message whole. A long text comes in pages from character at, saying where to go on. Omit `agent` to read your own memory. Give a name only to read another agent's memory (a line of it, by the agent's name) or a subagent's chat (its name, id: 0, gives its whole chat).", { id: INT, n: INT, at: INT, agent: STR }, ["id"]),
-  spec("date", "The date and time of message id.", { id: INT }, ["id"]),
+  spec("zoom", "Open the line id+n of the view into the two lines of n/2 under it; n = 1 gives the message whole. Each line says when, between its id and its text: its message's time, or its first's and last's, with the offset from UTC. A long text comes in pages from character at, saying where to go on. Omit `agent` to read your own memory. Give a name only to read another agent's memory (a line of it, by the agent's name) or a subagent's chat (its name, id: 0, gives its whole chat).", { id: INT, n: INT, at: INT, agent: STR }, ["id"]),
 ];
 // built at each listing: spawn names the models offered now, which
 // Settings change while Ki runs
@@ -345,15 +344,12 @@ export namespace Tools {
           return { text: (Team.get(copy.from ?? "")?.name ?? "") + "'s message " + copy.copy + ":\n" + Memory.zoom(from.mem, copy.copy, 1, at), fail: false, imgs };
         }
         const line = copy?.kind === "team" ? Memory.node(there.mem, { l: 0, i: id }) : null;
-        if (line !== null) {
+        if (copy !== null && line !== null) {
           // a deleted agent's message: its line is all that's left
-          return { text: id + "+1|" + line, fail: false };
+          return { text: id + "+1 · " + Memory.when(copy.date) + "|" + line, fail: false };
         }
         const imgs = n === 1 && at === 0 ? Memory.images(there.mem, id) : [];
         return { text: Memory.zoom(there.mem, id, n, at), fail: false, imgs };
-      }
-      case "date": {
-        return { text: Memory.date(mem, Number(args.id)), fail: false };
       }
       case "schedule": {
         return Tools.schedule(seat, Timer.timer_new(args, Date.now()));

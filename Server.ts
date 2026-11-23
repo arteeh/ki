@@ -967,7 +967,7 @@ export namespace Chat {
       tell    : (name, text) => Promise.resolve(Chat.tell(chat, name, text)),
       stop    : (name, why) => Chat.sub_stop(chat, name, Chat.name(chat) || "Ki", why),
       working : () => [...chat.subs.values()].filter((s) => s.run.busy).map((s) => s.name + " (" + Chat.sub_doing(s) + ")"),
-      show    : (name) => (chat.subs.has(name) || Memory.agent(chat.mem, name) !== null ? Memory.agent_show(chat.mem, name) : null),
+      show    : (name) => (chat.subs.has(name) || Memory.agent(chat.mem, name) !== null ? Memory.agent_show(chat.mem, name, true) : null),
     };
   }
 
