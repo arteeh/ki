@@ -5,8 +5,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
 RUN arch=$(dpkg --print-architecture | sed 's/amd64/x64/') \
     && curl -fsSL https://nodejs.org/dist/v26.13.1/node-v26.13.1-linux-$arch.tar.xz | tar -xJ -C /usr/local --strip-components=1
 ENV BUN_INSTALL=/opt/bun PATH=/opt/bun/bin:$PATH PLAYWRIGHT_BROWSERS_PATH=/opt/pw
-RUN curl -fsSL https://bun.sh/install | bash -s bun-v1.4.4
-RUN npm install -g @playwright/cli@0.1.24 && npx -y playwright install-deps chromium && playwright-cli install-browser chromium
+RUN curl -fsSL https://bun.sh/install | bash -s bun-v1.4.5
+RUN npm install -g @playwright/cli@0.1.25 && npx -y playwright install-deps chromium && playwright-cli install-browser chromium
 WORKDIR /deps
 COPY package.json bun.lock ./
 RUN bun install --frozen-lockfile

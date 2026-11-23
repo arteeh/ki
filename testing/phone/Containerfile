@@ -3,9 +3,9 @@
 # one, from APKMirror (Google Play needs an account; its Cloudflare lets
 # this curl through, not Ubuntu's)
 FROM quay.io/centos/centos:stream10 AS chrome
-ARG CHROME=157.0.8103.78
-ARG CHROME_PAGE=/apk/google-inc/chrome/google-chrome-157-0-8103-78-release/google-chrome-157-0-8103-78-7-android-apk-download/
-ARG CHROME_SHA256=44bd18c980f7d018dbc6cfb60b9f97c331667dfda441b5f7fdfba9718594b88e
+ARG CHROME=158.0.8127.42
+ARG CHROME_PAGE=/apk/google-inc/chrome/google-chrome-158-0-8127-42-release/google-chrome-158-0-8127-42-4-android-apk-download/
+ARG CHROME_SHA256=e3bd8833e0ed9223ec8ba7917507f2b320b51061c0e872e41987843c7094b0a3
 RUN A="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36" M=https://www.apkmirror.com \
     && no() { echo "Chrome $CHROME from APKMirror: $1. Find Google's x86_64 APK of a current Chrome on apkmirror.com and set CHROME, CHROME_PAGE (its download page) and CHROME_SHA256 here." >&2; exit 1; } \
     && k=$(curl -fsSA "$A" "$M$CHROME_PAGE" | grep -o 'href="[^"]*/download/?key=[^"]*"' | head -1 | cut -d'"' -f2 | sed 's/&amp;/\&/g') \
@@ -28,15 +28,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
 ENV ANDROID_HOME=/sdk ANDROID_SDK_ROOT=/sdk PATH=/sdk/platform-tools:/sdk/emulator:$PATH
 ARG REPO=https://dl.google.com/android/repository
 RUN get() { curl -fsSLo /t.zip "$REPO/$1" && echo "$2  /t.zip" | sha256sum -c - >/dev/null && mkdir -p "$3" && unzip -q /t.zip -d "$3" && rm /t.zip; } \
-    && get emulator-linux_x64-16740729.zip cbc7c3cfb83220b8a0f9c513fdab557712e74d339ec19ddffa43f23350ae9bdd /sdk \
+    && get emulator-linux_x64-16970787.zip a4405349d8a9c52136ab7861e5331dc40e85574bd91cb8889a298a2ff4c52e26 /sdk \
     && get platform-tools_r37.0.3-linux.zip 214548146cadb2ca3508143d8a1d4be4c59de5bb837253e3ede89ed74cf450d1 /sdk \
-    && get sys-img/google_apis/x86_64-36_r07.zip b1bb0769d0bed7698e61f203d7dc9bf6e7c37cd01a39d0d8788a11186bc78160 /sdk/system-images/android-36/google_apis
+    && get sys-img/google_apis/x86_64-37.0_r08.zip 75ed072b88f9bb7edde0e3d22427deddbdad8be168b058a79269b55de40f6f25 /sdk/system-images/android-37.0/google_apis
 COPY --from=chrome /chrome.apk /chrome.version /
 COPY --from=touch /touch /
 RUN mkdir -p /root/.android/avd/phone.avd \
-    && printf 'avd.ini.encoding=UTF-8\npath=/root/.android/avd/phone.avd\ntarget=android-36\n' > /root/.android/avd/phone.ini \
+    && printf 'avd.ini.encoding=UTF-8\npath=/root/.android/avd/phone.avd\ntarget=android-37.0\n' > /root/.android/avd/phone.ini \
     && printf '%s\n' avd.ini.encoding=UTF-8 abi.type=x86_64 hw.cpu.arch=x86_64 hw.cpu.ncore=4 hw.ramSize=2560 \
-       image.sysdir.1=system-images/android-36/google_apis/x86_64/ tag.id=google_apis PlayStore.enabled=no \
+       image.sysdir.1=system-images/android-37.0/google_apis/x86_64/ tag.id=google_apis PlayStore.enabled=no \
        hw.lcd.width=1080 hw.lcd.height=2400 hw.lcd.density=420 hw.screen=multi-touch hw.keyboard=yes \
        hw.audioInput=no hw.audioOutput=no hw.gsmModem=no disk.dataPartition.size=6G \
        > /root/.android/avd/phone.avd/config.ini
