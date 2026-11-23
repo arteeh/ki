@@ -450,15 +450,20 @@ function chat(): void {
   keep.observe($("#log .rows"));
   keep.observe($("#log .tail"));
   keep.observe($("footer"), { box: "border-box" });
-  // a tool line opened at the chat's end grows down, its line staying put
+  // a tool line opened at the chat's end grows down, its line staying put;
+  // a group of them stays open by its calls, which a group made anew of
+  // more calls, or moved from the tail into the chat, still has (#210)
   $("#log").addEventListener("toggle", (ev) => {
     if (ev.target instanceof HTMLDetailsElement && ev.target.matches(".line")) {
       SCROLL.still = true;
-      const of = ev.target.dataset.of;
-      if (of !== undefined && ev.target.open) {
-        OPENED.add(of);
-      } else if (of !== undefined) {
-        OPENED.delete(of);
+      const group = ev.target.dataset.ofs !== undefined;
+      const set = group ? GROUPED : OPENED;
+      for (const of of group ? ev.target.dataset.ofs?.split(" ") ?? [] : [ev.target.dataset.of ?? []].flat()) {
+        if (ev.target.open) {
+          set.add(of);
+        } else {
+          set.delete(of);
+        }
       }
     }
   }, true);
@@ -1186,8 +1191,9 @@ async function import_copy(file: File): Promise<Blob> {
 
 const MARKUP = new WeakMap<Element, string>();
 
-// the tool rows opened, by their call
+// the tool rows opened, by their call; the calls of groups opened (#210)
 const OPENED = new Set<string>();
+const GROUPED = new Set<string>();
 
 // classes a row's state turns on and off, not what row it is
 const PASSING = new Set(["writing", "queued", "typing", "running"]);
@@ -1244,10 +1250,13 @@ function markup(el: Element, htmls: string[], spares: Element[] | null = null): 
   for (const child of left.filter((x) => spares === null || free.includes(x))) {
     child.remove();
   }
-  // a tool row the user opened stays open when it is made anew (#121)
-  for (const kid of kids.filter((k) => !k.isConnected && OPENED.size > 0)) {
-    for (const d of [kid, ...kid.querySelectorAll("details.line[data-of]")]) {
-      if (d instanceof HTMLDetailsElement && d.dataset.of !== undefined && OPENED.has(d.dataset.of)) {
+  // a tool row the user opened stays open when it is made anew (#121), a
+  // group as long as one of its calls was open (#210)
+  for (const kid of kids.filter((k) => !k.isConnected && OPENED.size + GROUPED.size > 0)) {
+    for (const d of [kid, ...kid.querySelectorAll("details.line")]) {
+      const of = d instanceof HTMLElement ? d.dataset.of : undefined;
+      const ofs = d instanceof HTMLElement ? d.dataset.ofs?.split(" ") ?? [] : [];
+      if (d instanceof HTMLDetailsElement && ((of !== undefined && OPENED.has(of)) || ofs.some((x) => GROUPED.has(x) || OPENED.has(x)))) {
         d.open = true;
       }
     }
@@ -1403,6 +1412,9 @@ function paint(): void {
   }
   markup($("#log .tail"), View.view_tail(v).map(Html.row_html), spares === null ? null : []);
   Box.box_sizes($("#log .tail"));
+  // an open group's calls as it is now: those that came since it was opened
+  // keep it open too (#210)
+  document.querySelectorAll<HTMLElement>("#log details.group[open][data-ofs]").forEach((d) => d.dataset.ofs?.split(" ").forEach((of) => GROUPED.add(of)));
   $("#log").classList.toggle("still", v.on !== v.agent);
   frames();
   foot();

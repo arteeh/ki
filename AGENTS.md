@@ -23,7 +23,7 @@ Steer what the models answer with `fake`, never with test commands in chat messa
 
 ```sh
 fake reply "text"                        # or --think "t" "text": thinks 5 s first, its text "t" at the end
-fake tool NAME 'JSON' [NAME 'JSON' ...]  # tool calls; --pace 2s: each that long after the one before
+fake tool NAME 'JSON' [NAME 'JSON' ...]  # tool calls; --pace 2s: each that long after the one before; --think "t": thinks first, as reply
 fake error KIND [--reset 5m]             # prompt-too-long, overloaded, rate-limit, usage-limit, auth-expired
 fake stall 60s | fake cut                # the stream hangs, or drops halfway
 fake log | fake last [--json] | fake clear

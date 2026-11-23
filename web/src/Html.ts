@@ -189,6 +189,9 @@ function row_make(row: View.Row): string {
     case "Line": {
       return line_html(row);
     }
+    case "Group": {
+      return group_html(row);
+    }
   }
 }
 
@@ -212,6 +215,24 @@ function line_html(row: Extract<View.Row, { $: "Line" }>): string {
   const head = `<summary><span class="ic">${Theme.tool_glyph(c.name)}</span>${name}${what}${diff}${fail}${where}</summary>`;
   const phase = row.phase === undefined ? "" : " " + row.phase;
   return `<details class="msg tool line${phase}"${at}${of}>${head}<div class="full">${row.rows.map(line_part).join("")}</div></details>`;
+}
+
+// tool calls in a row as one line (#210): their tools by count, in the
+// order each first came, and the devices they ran on; the dots while one is
+// written, else the ring while one runs, else 🛠️; opened, each call's own
+// line. ofs: its calls, by which it stays open as it changes
+function group_html(row: Extract<View.Row, { $: "Group" }>): string {
+  const at = row.id === null ? "" : ` data-a="${row.id}"`;
+  const counts = new Map<string, number>();
+  row.lines.forEach((l) => counts.set(l.call.name, (counts.get(l.call.name) ?? 0) + 1));
+  const what = [...counts].map(([name, n]) => n + "x " + name).join(", ");
+  const devices = [...new Set(row.lines.map((l) => l.call.device).filter((d) => d !== ""))];
+  const where = devices.length === 0 ? "" : `<span class="on">· ${esc(devices.join(", "))}</span>`;
+  const ofs = row.lines.flatMap((l) => (l.rows[0].$ === "Msg" && l.rows[0].of !== undefined ? [l.rows[0].of] : []));
+  const of = ofs.length === 0 ? "" : ` data-ofs="${esc(ofs.join(" "))}"`;
+  const phase = row.phase === undefined ? "" : " " + row.phase;
+  const head = `<summary><span class="ic">${Theme.TOOLS}</span><span class="arg">${esc(what)}</span>${where}</summary>`;
+  return `<details class="msg tool line group${phase}"${at}${of}>${head}<div class="full">${row.lines.map(line_html).join("")}</div></details>`;
 }
 
 // an opened line's part: the call's whole input, or the result as it is

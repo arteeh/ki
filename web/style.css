@@ -200,6 +200,10 @@ body.subpage header > .title { display: block; }
 .msg.tool.line .on { flex: none; margin-left: auto; color: var(--soft); }
 .msg.tool.line .bad + .on { margin-left: 8px; }
 .msg.tool.line[open] { border-radius: 10px; background: var(--block); }
+/* a group of calls opened shows each call's own line (#210) */
+.msg.tool.line.group[open] { background: none; }
+.msg.tool.line.group[open] > summary { border-radius: 10px; }
+.msg.tool.line.group > .full { display: flex; flex-direction: column; gap: 6px; padding: 6px 0 0 18px; }
 .msg.tool.line[open] > summary { border-radius: 10px 10px 0 0; }
 .msg.tool.line > .full { padding: 2px 12px 10px; overflow-wrap: anywhere; }
 .msg.tool.line > .full p { white-space: pre-wrap; }

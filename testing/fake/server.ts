@@ -4,7 +4,7 @@ import { CASES, type Kind, type Vendor } from "./cases.ts";
 
 export type Order =
   | { what: "reply"; text: string; think?: string }
-  | { what: "tool"; calls: Array<[string, unknown]>; pace?: number }
+  | { what: "tool"; calls: Array<[string, unknown]>; pace?: number; think?: string }
   | { what: "error"; kind: Kind; reset: number }
   | { what: "stall"; ms: number }
   | { what: "cut" };
@@ -367,9 +367,10 @@ async function model(req: Request, vendor: Vendor, url: URL): Promise<Response> 
     return failure(vendor, name, order.kind, order.reset);
   }
   const named = (n: string) => tools.find((t) => t === n || t.endsWith("__" + n)) ?? n;
+  const think = (order.what === "reply" || order.what === "tool") && order.think !== undefined ? [{ think: order.think }] : [];
   const blocks: Sent["blocks"] = order.what === "tool"
-    ? order.calls.map(([n, input]) => ({ id: claude ? id("toolu_01") : id("call_"), name: named(n), json: JSON.stringify(input) }))
-    : [...(order.what === "reply" && order.think !== undefined ? [{ think: order.think }] : []), { text: order.what === "reply" ? order.text : "ok" }];
+    ? [...think, ...order.calls.map(([n, input]) => ({ id: claude ? id("toolu_01") : id("call_"), name: named(n), json: JSON.stringify(input) }))]
+    : [...think, { text: order.what === "reply" ? order.text : "ok" }];
   const sent: Sent = { blocks, stall: order.what === "stall" ? order.ms : 0, cut: order.what === "cut", pace: order.what === "tool" ? order.pace ?? 0 : 0 };
   const used = cache(got.segs, got.marks);
   return claude ? anthropic(vendor, name, sent, used) : openai(vendor, name, sent, used);

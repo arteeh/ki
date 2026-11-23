@@ -205,10 +205,13 @@ export type Row =
   | { $: "Box"; id: number; n: number; msgs: number; text: string; rows: Row[] }
   | { $: "Msg"; id: number | null; kind: Kind; who: string; text: string; body: Md.Block[]; call: Call.Call | null; images: string[]; queued?: boolean; from?: string; of?: string; writing?: true }
   | { $: "Line"; id: number | null; call: Call.Call; echo: string | null; rows: Row[]; phase?: Phase }
+  | { $: "Group"; id: number | null; lines: Line[]; phase?: Phase }
   | { $: "Cap"; text: string; think?: true; earlier?: true; wait?: true }
 
 // a tool call while it's written, then while it runs (#129)
 type Phase = "typing" | "running";
+
+type Line = Extract<Row, { $: "Line" }>;
 
 export type Knob = { text: string; move: Move; hint: string; choices: Choice[] };
 
@@ -678,10 +681,44 @@ export function view_body(v: View): Row[] {
   if (v.page !== null) {
     const sub = view_sub(v);
     const rows = page_rows(v.page, v.thinking !== false, sub);
-    return backgrounded(sub === undefined ? rows : running(rows, 0), v.bg);
+    return grouped(backgrounded(sub === undefined ? rows : running(rows, 0), v.bg));
   }
   const rows = view_lines(view_rows(v, v.parts).flat());
-  return backgrounded(v.busy ? running(rows, v.turn) : rows, v.bg);
+  return grouped(backgrounded(v.busy ? running(rows, v.turn) : rows, v.bg));
+}
+
+// two and more tool calls in a row are one line that opens on them, as
+// they show (#210): anything else between them, a fold's edge among them,
+// ends the run; each made once while its calls stay the same
+const GROUPS = new WeakMap<Row, Row>();
+
+function grouped(rows: Row[]): Row[] {
+  const out: Row[] = [];
+  for (let k = 0; k < rows.length; ) {
+    const r = rows[k];
+    let j = k;
+    while (j < rows.length && is_call(rows[j])) {
+      j++;
+    }
+    if (j - k < 2) {
+      out.push(r.$ === "Box" ? { ...r, rows: grouped(r.rows) } : r);
+      k++;
+      continue;
+    }
+    const lines = rows.slice(k, j) as Line[];
+    const had = GROUPS.get(lines[0]);
+    const same = had?.$ === "Group" && had.lines.length === lines.length && had.lines.every((l, i) => l === lines[i]);
+    const phase = lines.some((l) => l.phase === "typing") ? "typing" : lines.some((l) => l.phase === "running") ? "running" : undefined;
+    const group: Row = same ? had : { $: "Group", id: lines[0].id, lines, ...(phase === undefined ? {} : { phase }) };
+    GROUPS.set(lines[0], group);
+    out.push(group);
+    k = j;
+  }
+  return out;
+}
+
+function is_call(r: Row): r is Line {
+  return r.$ === "Line" && r.call.name !== "";
 }
 
 // a subagent's page shown near its top: its earlier entries (#143)
@@ -808,10 +845,10 @@ export function view_tail(v: View): Row[] {
     const queued = (sub?.queue ?? []).flatMap((text) => waits("user", text, true));
     const last = v.page.log?.at(-1);
     const idle = sub !== undefined && v.page.live.length === 0 && (last?.kind !== "tool" || last.echo !== undefined) && sub.doing !== "usage limit";
-    return [...thought, ...live_rows(page, sub !== undefined), ...(idle ? [WAITING] : []), ...queued];
+    return [...thought, ...grouped(live_rows(page, sub !== undefined)), ...(idle ? [WAITING] : []), ...queued];
   }
   const thought = v.thinking === false && (v.live.some((_, k) => thinks(v.live, k)) || (v.live.length === 0 && v.busy && v.wait === "" && thought_last(v))) ? [THINKING] : [];
-  const rows = [...thought, ...live_rows(v.live.filter((l) => v.thinking !== false || l.kind !== "mind"), v.busy && v.wait === "")];
+  const rows = [...thought, ...grouped(live_rows(v.live.filter((l) => v.thinking !== false || l.kind !== "mind"), v.busy && v.wait === ""))];
   const load = v.importing !== null ? [Cap(progress_show(v.importing))] : [];
   const said = !v.up ? v.out.flatMap((p) => waits("user", p.said, false)) : [];
   const kept = said.length > 0 ? [...said, Cap(UNSENT)] : [];

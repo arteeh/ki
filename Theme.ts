@@ -31,6 +31,9 @@ const TOOL: Record<string, string> = {
 };
 const TOOL_ANY = "🔧";
 
+// tool calls in a row, one line (#210)
+export const TOOLS = "🛠️";
+
 export const GLYPH = {
   tab   : "◯",
   here  : "●",
