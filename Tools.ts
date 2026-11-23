@@ -88,7 +88,10 @@ const SESSION = "mcp-session-id";
 
 const LOOK = 3000;
 
+const DEVICE = { device: { type: "string", description: "The name of the device to run on, one listed under Devices." } };
+
 const OWN: Spec[] = [
+  spec("stop_job", "Stop a background job of yours (a shell command that moved to the background), by its device and id (\"j12\"): all its processes, its pipeline and what it started, even after its shell ended. It answers Stopped once none is left, or why not; other jobs and services are left alone.", { ...DEVICE, job: STR }, ["device", "job"]),
   spec("zoom", "Open the line id+n of the view into the two lines of n/2 under it; n = 1 gives the message whole. Each line says when, between its id and its text: its message's time, or its first's and last's, with the offset from UTC. A long text comes in pages from character at, saying where to go on. Omit `agent` to read your own memory. Give a name only to read another agent's memory (a line of it, by the agent's name) or a subagent's chat (its name, id: 0, gives its whole chat).", { id: INT, n: INT, at: INT, agent: STR }, ["id"]),
 ];
 // built at each listing: spawn names the models offered now, which
@@ -114,7 +117,6 @@ const boss = (): Spec[] => [
   spec("stop", "Stop a running subagent at once, by name, whatever it is doing (mid-call, waiting on a usage limit, running a tool on a device). Others keep running. It is done then, and its jobs end with it: its report says it was stopped.", { name: STR, why: { type: "string", description: "Why, for its report." } }, ["name"]),
   spec("resume", "Wake every call on this server waiting for an AI service's usage limit (other turns, summaries), when the user says a limit was reset early. Each asks again once; one still limited waits again.", {}, []),
 ];
-const DEVICE = { device: { type: "string", description: "The name of the device to run on, one listed under Devices." } };
 const KIT: Spec[] = TOOLS.map((t) => {
   const schema = t.schema as { properties: object; required: string[] };
   const info = t.info + " It runs on the device named; a relative path is in your scratch folder there, and ~ is the home folder.";
@@ -350,6 +352,10 @@ export namespace Tools {
         }
         const imgs = n === 1 && at === 0 ? Memory.images(there.mem, id) : [];
         return { text: Memory.zoom(there.mem, id, n, at), fail: false, imgs };
+      }
+      case "stop_job": {
+        const subs = seat.subs?.working().map((s) => s.split(" ")[0]) ?? [];
+        return Tools.job(tools, text_of(args.device), { name, input: { id: text_of(args.job).trim(), agents: [who, ...subs] }, cwd: "main" }, signal, id);
       }
       case "schedule": {
         return Tools.schedule(seat, Timer.timer_new(args, Date.now()));

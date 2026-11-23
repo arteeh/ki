@@ -27,6 +27,7 @@ const TOOL: Record<string, string> = {
   spawn      : "🐣",
   tell       : "💬",
   stop       : "✋",
+  stop_job   : "✋",
 };
 const TOOL_ANY = "🔧";
 

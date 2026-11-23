@@ -25,6 +25,7 @@ const READS = new Map<string, (x: Input) => Shown>([
   ["spawn",    (x) => ({ head: tasks_show(x.tasks), blocks: list(x.tasks).flatMap(task_block) })],
   ["tell",     (x) => said_show(x.name, x.message)],
   ["stop",     (x) => ({ head: text_of(x.name), blocks: text_block(x.why) })],
+  ["stop_job", (x) => ({ head: text_of(x.job), blocks: [] })],
   ["schedule", (x) => ({ head: (x.cron === undefined ? text_of(x.at) : "cron " + text_of(x.cron, "null")) + " " + text_of(x.zone), blocks: text_block(x.message) })],
 ]);
 

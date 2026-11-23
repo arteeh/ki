@@ -48,6 +48,16 @@ export const JOBS = { running: new Map<Bun.Subprocess, Bg>(), n: 0, changed: () 
 // jobs ended with their agent: nothing is left to tell
 const KILLED = new Set<Bun.Subprocess>();
 
+// every job by its id while its process group may still hold processes,
+// its shell gone or not: stop_job stops it by that id (#212); stopped, its
+// report says so
+type Tracked = { proc: Bun.Subprocess; job: Bg; born: number };
+const TRACKED = new Map<string, Tracked>();
+
+// how much earlier than its shell Windows may date a process it started
+const BORN = 1000;
+const STOPPED = new Set<Bun.Subprocess>();
+
 const GONE = 3000;
 
 const CONTEXT = 3;
@@ -80,7 +90,7 @@ const WAIT = 60;
 const EDIT = { type: "object", properties: { path: STR, old: STR, new: STR, all: { type: "boolean" } }, required: ["path", "old", "new"] };
 
 export const TOOLS: Spec[] = [
-  spec("shell", "Run a command with the device's shell ($SHELL -c), stdout and stderr together, and return its output, then its exit code and time, as (exit 0 in 0.4 s); output past " + CAP + " characters keeps its head and tail. Each call is a new shell. The call waits until the command and everything holding its output end, up to timeout seconds. A command still running then moves to the background as a job: the call returns its output so far, its pid and its log file, and when it ends, its exit code and output reach you as a new message from a job, starting \"[Job id]\" (Jobs running lists those at work, and a later call can end one by its pid; stopping your turn leaves them running). So run builds and tests in the call, however long they take, and never sleep a fixed time to wait for something. Start only a server that never ends detached (&, with its own output file). Stopping the device kills every process the calls started.", { command: STR, timeout: { type: "integer", minimum: TIMEOUT[0], maximum: TIMEOUT[1], description: "Seconds to wait here, " + TIMEOUT[0] + " to " + TIMEOUT[1] + " (default " + WAIT + "): then the command moves to the background and reports back when it ends." } }, ["command"]),
+  spec("shell", "Run a command with the device's shell ($SHELL -c), stdout and stderr together, and return its output, then its exit code and time, as (exit 0 in 0.4 s); output past " + CAP + " characters keeps its head and tail. Each call is a new shell. The call waits until the command and everything holding its output end, up to timeout seconds. A command still running then moves to the background as a job: the call returns its output so far, its pid and its log file, and when it ends, its exit code and output reach you as a new message from a job, starting \"[Job id]\" (Jobs running lists those at work, and stop_job ends one by its id, all its processes; stopping your turn leaves them running). So run builds and tests in the call, however long they take, and never sleep a fixed time to wait for something. Start only a server that never ends detached (&, with its own output file). Stopping the device kills every process the calls started.", { command: STR, timeout: { type: "integer", minimum: TIMEOUT[0], maximum: TIMEOUT[1], description: "Seconds to wait here, " + TIMEOUT[0] + " to " + TIMEOUT[1] + " (default " + WAIT + "): then the command moves to the background and reports back when it ends." } }, ["command"]),
   spec("read", "Read a text file. offset: the first line to show (from 1); limit: how many lines; at: the character of the first line to start from. It ends saying the lines shown, as [lines 4-7 of 15]; output past " + CAP + " characters comes in pages, saying where to go on. An image file (png, jpeg, gif, webp) comes as the picture, scaled to fit " + FIT + " px, or max_side px if given (a GIF shows its first frame; view_video plays it).", { path: STR, offset: INT, limit: INT, at: INT, max_side: INT }, ["path"]),
   spec("write", "Write a whole file, making its directories. Answers a unified diff of what changed (a new file: all its lines added).", { path: STR, content: STR }, ["path", "content"]),
   spec("view_video", "See part of a video (any file ffmpeg opens: mp4, mkv, webm, mov, avi, gif...) as ONE image: a grid of its frames, row by row, each stamped with its frame number (top) and time (bottom), fitting " + FIT + " px, or max_side px. It also answers a line on the whole video (duration, fps, frames, size). start and end: the range, ends included, in frames from 0 (or seconds, with unit \"second\"); by default the whole video. step: take every step-th frame; by default the one that gives at most 16. Each frame gets smaller as more share the sheet: past about 25 they get hard to read, and " + SHEET + " is the most. For a long stretch, raise step, narrow the range, or call again on the next range. Needs ffmpeg and ffprobe on the device.", { path: STR, start: { type: "number" }, end: { type: "number" }, unit: { type: "string", enum: ["frame", "second"] }, step: INT, max_side: INT }, ["path"]),
@@ -144,6 +154,9 @@ export namespace Machine {
         case "edit": {
           return Machine.edit(cwd, input.edits);
         }
+        case "stop_job": {
+          return await Machine.stop_job(String(input.id), listed(input.agents).map(String));
+        }
         case "skills": {
           return { text: JSON.stringify(Machine.skills(os.homedir())), fail: false };
         }
@@ -174,7 +187,11 @@ export namespace Machine {
 
   export async function shell(cwd: string, command: string, ms: number, signal: AbortSignal): Promise<Out> {
     SHELLS.forEach((_, p) => Machine.group_may_hold_job(p) || SHELLS.delete(p));
+    if (!WIN) {
+      TRACKED.forEach((t, id) => Machine.group_may_hold_job(t.proc) || TRACKED.delete(id));
+    }
     const agent = path.basename(cwd);
+    const born = Date.now();
     const start = performance.now();
     const proc = Machine.spawn_in_group_marked(cwd, command, agent);
     const out = clip();
@@ -226,6 +243,7 @@ export namespace Machine {
       }
       const where = () => "output in " + log.file + (log.ok ? "" : " (incomplete: it couldn't be written)");
       JOBS.running.set(proc, job);
+      TRACKED.set(job.id, { proc, job, born });
       JOBS.changed();
       void read.then(() => {
         JOBS.running.delete(proc);
@@ -233,7 +251,7 @@ export namespace Machine {
         if (KILLED.delete(proc)) {
           return;
         }
-        JOBS.ended(job, Machine.exit(proc) + " in " + Math.round(took()) + " s, " + where() + Machine.fenced(shown()));
+        JOBS.ended(job, (STOPPED.delete(proc) ? "stopped by stop_job" : Machine.exit(proc)) + " in " + Math.round(took()) + " s, " + where() + Machine.fenced(shown()));
       });
       return { text: shown() + MOVED + Math.round(took()) + " s as job " + job.id + ", pid " + proc.pid + ", " + where() + "; it reports back when it ends)", fail: false };
     }
@@ -333,6 +351,57 @@ export namespace Machine {
 
   export function end(): void {
     Machine.sweep(null);
+  }
+
+  // a job of the agents': all of its processes, its shell gone or not, and
+  // Stopped only once none is left
+  export async function stop_job(id: string, agents: string[]): Promise<Out> {
+    const t = TRACKED.get(id);
+    const ended = { text: "Job " + id + " had already ended: nothing was left to stop.", fail: false };
+    if (t === undefined) {
+      const logged = /^j\d+$/.test(id) && fs.existsSync(path.join(Machine.home(SCRATCH), "jobs", id + ".log"));
+      return logged ? ended : { text: "No job " + id + " on this device.", fail: true };
+    }
+    if (!agents.includes(t.job.agent)) {
+      return { text: "Job " + id + " isn't yours: nothing was stopped.", fail: true };
+    }
+    const left = await Machine.job_left(t);
+    if (left.length === 0) {
+      TRACKED.delete(id);
+      return ended;
+    }
+    STOPPED.add(t.proc);
+    const until = Date.now() + GONE;
+    for (let now = left; now.length > 0; now = await Machine.job_left(t)) {
+      if (Date.now() > until) {
+        return { text: "Job " + id + " didn't stop: " + now.length + " of its processes still run (" + now.join(", ") + ").", fail: true };
+      }
+      now.forEach((pid) => Machine.kill(pid));
+      await Bun.sleep(100);
+    }
+    TRACKED.delete(id);
+    return { text: "Stopped job " + id + ": " + t.job.command.replace(/\s+/g, " ").trim().slice(0, 100), fail: false };
+  }
+
+  // the processes of a job still running: its process group (as -pgid); on
+  // Windows, which has no groups, its shell and every process under it
+  // started since, an ended shell's children still naming it their parent
+  export async function job_left(t: Tracked): Promise<number[]> {
+    if (!WIN) {
+      return Machine.group_may_hold_job(t.proc) ? [-t.proc.pid] : [];
+    }
+    const ps = "Get-CimInstance Win32_Process | ForEach-Object { \"$($_.ProcessId) $($_.ParentProcessId) $($_.CreationDate.ToUniversalTime().ToString('o'))\" }";
+    const out = await Machine.exec([SHELL, "-NoProfile", "-NonInteractive", "-Command", PWSH + ps], AbortSignal.timeout(GONE * 3));
+    const procs = out.out.toString().split("\n").map((l) => l.trim().split(" ")).filter((w) => w.length === 3).map(([pid, up, at]) => ({ pid: Number(pid), up: Number(up), at: Date.parse(at) }));
+    const mine = new Set<number>(t.proc.exitCode === null && t.proc.signalCode === null ? [t.proc.pid] : []);
+    for (let more = true; more; ) {
+      more = false;
+      for (const p of procs.filter((p) => !mine.has(p.pid) && (p.up === t.proc.pid || mine.has(p.up)) && p.at >= t.born - BORN)) {
+        mine.add(p.pid);
+        more = true;
+      }
+    }
+    return [...mine];
   }
 
   // jobs: its background jobs too, which then report nothing
