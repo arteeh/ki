@@ -9,7 +9,7 @@ import { Memory } from "./Memory.ts";
 import * as Prompts from "./Prompts.ts";
 import { Team } from "./Team.ts";
 import * as Timer from "./Timer.ts";
-import { PING, type BgJob } from "./View.ts";
+import { PING, type BgJob, type Slash } from "./View.ts";
 import { Sub, type Spawn } from "./Sub.ts";
 import { err_why } from "./Err.ts";
 import { get, list as items, rec, text_of } from "./Json.ts";
@@ -122,7 +122,6 @@ const KIT: Spec[] = TOOLS.map((t) => {
   const info = t.info + " It runs on the device named; a relative path is in your scratch folder there, and ~ is the home folder.";
   return spec(t.name, info, { ...DEVICE, ...schema.properties }, ["device", ...schema.required]);
 });
-const SKILL: Spec = spec("skill", "Load a skill listed under Skills: its SKILL.md, with the folder its other files are in on that device (read or run them there with your other tools).", { ...DEVICE, name: STR }, ["device", "name"]);
 
 export namespace Tools {
 
@@ -155,9 +154,50 @@ export namespace Tools {
     return { text: Prompts.prompt("devices", { devices: lines.length === 0 ? Prompts.prompt("devices-none") : lines.join("\n"), id, media: dir + "/docs/media/" }) + "\n\n", mark: false };
   }
 
+  // each skill name once over the devices open now: the newest SKILL.md's,
+  // the first device by name's on a tie, so the user's / list, the skill
+  // the server puts before a message and the agent's mean one file (#203)
+  export function skills_found(tools: Tools): Array<{ device: string; skill: Skill }> {
+    const found = new Map<string, { device: string; skill: Skill }>();
+    for (const [device, d] of Tools.opened(tools)) {
+      for (const skill of d.skills) {
+        if ((found.get(skill.name)?.skill.at ?? -1) < skill.at) {
+          found.set(skill.name, { device, skill });
+        }
+      }
+    }
+    return [...found.values()].sort((a, b) => Mcp.by_name(a.skill.name, b.skill.name));
+  }
+
+  // the agent's: its device and file to read it by, none it may not use
   export function skills(tools: Tools): Block {
-    const lines = Tools.opened(tools).flatMap(([name, d]) => d.skills.toSorted((a, b) => Mcp.by_name(a.name, b.name)).map((s) => "- " + name + ": " + s.name + ": " + s.description.replace(/\s+/g, " ")));
+    const lines = Tools.skills_found(tools).filter(({ skill }) => skill.model).map(({ device, skill }) => "- " + device + ": " + skill.name + ": " + skill.description.replace(/\s+/g, " ") + " (" + skill.file + ")");
     return { text: lines.length === 0 ? "" : Prompts.prompt("skills") + "\n" + lines.join("\n") + "\n\n", mark: false };
+  }
+
+  // the user's, for the / list: no device shown
+  export function slashes(tools: Tools): Slash[] {
+    return Tools.skills_found(tools).filter(({ skill }) => skill.user).map(({ skill }) => ({ name: skill.name, about: skill.description, ...(skill.hint === undefined ? {} : { hint: skill.hint }) }));
+  }
+
+  // a skill the user starts: its SKILL.md, read from its device
+  export async function skill_read(tools: Tools, name: string, signal: AbortSignal): Promise<{ device: string; file: string; text: string } | null> {
+    const found = Tools.skills_found(tools).find(({ skill }) => skill.user && skill.name === name);
+    if (found === undefined) {
+      return null;
+    }
+    const out = await Tools.job(tools, found.device, { name: "skill_file", input: { file: found.skill.file }, cwd: "main" }, signal, crypto.randomUUID());
+    return out.fail ? null : { device: found.device, file: found.skill.file, text: out.text };
+  }
+
+  // a device's skills as it said them; any it got wrong left out
+  export function skills_read(text: string): Skill[] {
+    const all: unknown = JSON.parse(text);
+    return items(all).flatMap((x) => {
+      const [name, description, file, at, hint] = [get(x, "name"), get(x, "description"), get(x, "file"), get(x, "at"), get(x, "hint")];
+      const ok = typeof name === "string" && typeof description === "string" && typeof file === "string" && typeof at === "number";
+      return ok ? [{ name, description, file, at, ...(typeof hint === "string" ? { hint } : {}), model: get(x, "model") !== false, user: get(x, "user") !== false }] : [];
+    });
   }
 
   export async function look(tools: Tools, only: string | null = null): Promise<void> {
@@ -175,10 +215,14 @@ export namespace Tools {
       const out = await run.out;
       clearTimeout(timer);
       if (!late) {
+        const was = JSON.stringify(d.skills);
         try {
-          d.skills = out.fail ? [] : (JSON.parse(out.text) as Skill[]);
+          d.skills = out.fail ? [] : Tools.skills_read(out.text);
         } catch {
           d.skills = [];
+        }
+        if (JSON.stringify(d.skills) !== was) {
+          tools.hub.change();
         }
       }
     }));
@@ -302,7 +346,7 @@ export namespace Tools {
   // the same for every agent, so one cached copy serves them all, and the
   // same for every subagent
   export function list(sub = false): Spec[] {
-    return sub ? [...OWN, ...KIT, SKILL] : [...OWN, ...boss(), ...KIT, SKILL];
+    return sub ? [...OWN, ...KIT] : [...OWN, ...boss(), ...KIT];
   }
 
   export function off(tools: Tools): string[] {
@@ -385,9 +429,6 @@ export namespace Tools {
         const n = Limit.resume();
         return { text: n === 0 ? "No call was waiting for a usage limit." : "Woke " + n + " call" + (n === 1 ? "" : "s") + " waiting for a usage limit; any still limited waits again.", fail: false };
       }
-      case "skill": {
-        return Tools.job(tools, String(args.device), { name, input: { name: String(args.name) }, cwd: "main" }, signal, id);
-      }
       default: {
         const { device, ...input } = args;
         return Tools.job(tools, String(device), { name, input, cwd: who }, signal, id);
@@ -468,6 +509,9 @@ export namespace Tools {
     const d = tools.devices.get(device);
     if (d === undefined || !d.terms.delete(term)) {
       return;
+    }
+    if (d.terms.size === 0 && d.skills.length > 0) {
+      tools.hub.change();
     }
     for (const job of d.jobs.values()) {
       if (job.term === term) {

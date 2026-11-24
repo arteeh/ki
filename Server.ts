@@ -118,6 +118,9 @@ const SETTLE     = 200;
 // a subagent page's entries at a time; how long a stop waits for one to end
 const SHOWN      = 100;
 const HALT       = 5000;
+
+// how long a skill the user starts may take to read from its device
+const SKILL_WAIT = 10e3;
 // the order of the calls and of what waits for them (Chat.behind)
 const SEQ        = { n: 0 };
 
@@ -317,7 +320,8 @@ export namespace Chat {
     return { ...Pick.ask(chat.pick), ...system, searches: 0, server: "" };
   }
 
-  export async function say(chat: Chat, id: string, sizes: number[], body: Body): Promise<Answer> {
+  // skill: the one the page's list had the message start (#203)
+  export async function say(chat: Chat, id: string, sizes: number[], body: Body, skill: string | null): Promise<Answer> {
     if (chat.main.queue.some((x) => x.q.act === id)) {
       return {};
     }
@@ -336,8 +340,29 @@ export namespace Chat {
     }
     const text = (await Chat.read(body, at, body.size - at)).toString("utf8");
     const pics = [...images, ...await Chat.pictured(chat, text, images)];
-    const why = await Run.take(chat.main, { kind: "user", text, images: pics, act: id });
+    const led = await Chat.led(chat, text, skill);
+    const why = await Run.take(chat.main, { kind: "user", text: led.text, images: pics, act: id, ...(led.lead === undefined ? {} : { lead: led.lead }) });
     return why === null ? {} : { error: why };
+  }
+
+  // a message whose first word starts a skill (#203) goes with that
+  // SKILL.md before it, as the agent reads it; one the devices no longer
+  // have, as written with a note; /goal's as written, its word marked
+  export async function led(chat: Chat, text: string, skill: string | null): Promise<{ text: string; lead?: number }> {
+    const name = /^\/(\S+)(?:\s|$)/.exec(text)?.[1];
+    if (name === "goal") {
+      return { text, lead: 0 };
+    }
+    if (name === undefined || (name !== skill && !Tools.slashes(chat.tools).some((s) => s.name === name))) {
+      return { text };
+    }
+    const found = await Tools.skill_read(chat.tools, name, AbortSignal.timeout(SKILL_WAIT));
+    if (found === null) {
+      Chat.note(chat, "No skill " + name + " was found on the devices open now, so the message went as written.");
+      return { text };
+    }
+    const head = Prompts.prompt("skill-used", { name, device: found.device, file: found.file }) + "\n\n" + found.text.trim() + "\n\n";
+    return { text: head + text, lead: head.length };
   }
 
   export async function read(body: Body, at: number, n: number): Promise<Buffer<ArrayBuffer>> {
@@ -360,7 +385,7 @@ export namespace Chat {
       [chat.mem.hop, chat.mem.origin] = [hop, origin];
       Memory.save(chat.mem);
     }
-    return Chat.push(chat, chat.main, post.kind, post.text, post.images, false, post.act, post.from === undefined ? {} : { from: post.from }, true);
+    return Chat.push(chat, chat.main, post.kind, post.text, post.images, false, post.act, { ...(post.from === undefined ? {} : { from: post.from }), ...(post.lead === undefined ? {} : { lead: post.lead }) }, true);
   }
 
   export function queued(chat: Chat, run: Run<Pending, Msg>): void {
@@ -710,7 +735,7 @@ export namespace Chat {
 
   // sent: a message the run takes from its queue, shown queued till answered (Run.sent)
   // a result is logged in its call's message (#188)
-  export function push(chat: Chat, run: Talk, kind: Kind, text: string, images: string[] = [], more = false, act?: string, pair: Pair & { from?: string } = {}, sent = false): Msg {
+  export function push(chat: Chat, run: Talk, kind: Kind, text: string, images: string[] = [], more = false, act?: string, pair: Pair & { from?: string; lead?: number } = {}, sent = false): Msg {
     const call = kind === "echo" && pair.of !== undefined ? run.calls.get(pair.of) : undefined;
     if (call !== undefined && !call.logged && !Chat.mid_message(chat, run)) {
       call.logged = true;
@@ -760,9 +785,9 @@ export namespace Chat {
       Team.unread(chat.id, null);
       chat.told = true;
     }
-    const { i, kind, date, of, tool, from, result, mind } = roots[0];
+    const { i, kind, date, of, tool, from, result, mind, lead } = roots[0];
     const pages = roots.length > 1 ? { pages: roots.length } : {};
-    const said = Memory.call_of({ text: roots.map((r) => r.text).join(""), result });
+    const said = Memory.shown_of({ text: roots.map((r) => r.text).join(""), result, lead });
     Chat.all(chat, { $: "entry", id: i, kind, ...said, date, images: roots.flatMap((r) => r.images ?? []), of, tool, from, mind, ...pages, ...queued });
     if (first && Chat.real(roots[0])) {
       chat.gist = roots[0].i;
@@ -1162,7 +1187,7 @@ export namespace Chat {
     if (sub !== undefined) {
       sub.bytes += Chat.sub_bytes(root);
     }
-    Chat.all(chat, { $: "entry", agent: run.name, id: root.i, kind, ...Memory.call_of(root), date: root.date, of, tool, mind, ...(sent ? { sent } : {}) });
+    Chat.all(chat, { $: "entry", agent: run.name, id: root.i, kind, ...Memory.shown_of(root), date: root.date, of, tool, mind, ...(sent ? { sent } : {}) });
     return { id: root.i, end: root.i + 1 };
   }
 
@@ -1680,10 +1705,10 @@ export namespace Chat {
     const talk = Chat.meter(chat);
     const shown = (text: string): string => (text.length > QUEUED_TEXT ? text.slice(0, QUEUED_TEXT) + "…" : text);
     const run = chat.main;
-    const queue: Queued[] = run.queue.map(({ q }) => ({ kind: q.kind, text: shown(q.text) }));
+    const queue: Queued[] = run.queue.map(({ q }) => ({ kind: q.kind, text: shown(q.text.slice(q.lead ?? 0)) }));
     const sent = run.sent.flatMap(({ m }) => Array.from({ length: m.end - m.id }, (_, k) => m.id + k));
     const bg = Tools.bg(chat.tools, (agent) => agent === chat.who || chat.subs.has(agent) || chat.gone.has(agent));
-    return { $: "state", agent: chat.id, busy: run.busy, wait: Chat.waits(chat), pick: chat.pick, ...config.OFFER, importing, limit: run.limit, queue, sent, sums: Chat.sums(chat), again: chat.mem.again, timers, mcp, talk, bg, build: BUILD, thinking: config.THINKING };
+    return { $: "state", agent: chat.id, busy: run.busy, wait: Chat.waits(chat), pick: chat.pick, ...config.OFFER, importing, limit: run.limit, queue, sent, sums: Chat.sums(chat), again: chat.mem.again, timers, mcp, talk, bg, build: BUILD, thinking: config.THINKING, skills: Tools.slashes(chat.tools) };
   }
 
   export function sums(chat: Chat): Sums | null {
@@ -1731,7 +1756,8 @@ export namespace Chat {
     if (m === null) {
       return "";
     }
-    const text = Memory.flat(m.text).replace(/[*_`#>]+/g, "").trim();
+    const said = m.lead === undefined ? m.text : Memory.say(chat.mem, ...Memory.pages_of(chat.mem, m.i)).text.slice(m.lead);
+    const text = Memory.flat(said).replace(/[*_`#>]+/g, "").trim();
     return (m.kind === "user" ? "You: " : "") + (text.length > LAST ? text.slice(0, LAST) + "…" : text);
   }
 
@@ -1803,7 +1829,7 @@ export namespace Chat {
         const asked = typeof msg.before === "number" ? msg.before : undefined;
         const before = asked ?? log?.length ?? 0;
         const from = Math.max(0, before - SHOWN);
-        const entries = (log ?? []).slice(from, before).map((root) => ({ id: root.i, kind: root.kind, ...Memory.call_of(root), date: root.date, of: root.of, tool: root.tool, mind: root.mind }));
+        const entries = (log ?? []).slice(from, before).map((root) => ({ id: root.i, kind: root.kind, ...Memory.shown_of(root), date: root.date, of: root.of, tool: root.tool, mind: root.mind }));
         Chat.send(sock, { $: "agent", name, found: log !== null, from, before: asked, entries, done: !chat.subs.has(name), how: Chat.sub_how(chat, name, log) });
         if (asked === undefined) {
           Chat.send(sock, { $: "live", agent: name, live: chat.subs.get(name)?.run.live ?? [] });
@@ -1965,7 +1991,7 @@ export namespace Chat {
           if (typeof msg.sizes !== "string") {
             throw new Error("A say has no sizes.");
           }
-          return await Chat.say(chat, id, msg.sizes.split(",").filter(Boolean).map(Number), body);
+          return await Chat.say(chat, id, msg.sizes.split(",").filter(Boolean).map(Number), body, typeof msg.skill === "string" ? msg.skill : null);
         }
         case "import": {
           return await Chat.writing(chat, () => Chat.ingest(chat, id, body));
@@ -2030,7 +2056,7 @@ export namespace Chat {
         sock.data.seen.add("whole " + a);
         const pages = Array.from({ length: b - a }, (_, k) => Memory.at(chat.mem, a + k));
         const m = pages[0];
-        const said = Memory.call_of({ text: pages.map((p) => p.text).join(""), result: m.result });
+        const said = Memory.shown_of({ text: pages.map((p) => p.text).join(""), result: m.result, lead: m.lead });
         const images = pages.flatMap((p) => p.images ?? []);
         Chat.send(sock, { $: "know", whole: { [a]: { kind: m.kind, ...said, date: m.date, images, of: m.of, tool: m.tool, from: m.from, mind: m.mind, ...(b - a > 1 ? { pages: b - a } : {}) } } });
       }

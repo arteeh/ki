@@ -125,6 +125,19 @@ function parts_keep(html: string, shell: string, kids: string[]): string {
 // the last, the same objects (Md.md_parse)
 const BLOCKS = new WeakMap<Md.Block, { html: string; names: string }>();
 
+// one entry of the composer's / list (#203): its name, its argument-hint
+// dimmed, what it does cut to a line
+export function slash_html(s: View.Slash, on: boolean): string {
+  const hint = s.hint === undefined ? "" : `<span class="hint">${esc(s.hint)}</span>`;
+  return `<button type="button" role="option" class="${on ? "on" : ""}" aria-selected="${String(on)}" data-name="${esc(s.name)}"><b>/${esc(s.name)}</b>${hint}<span class="about">${esc(s.about.replace(/\s+/g, " "))}</span></button>`;
+}
+
+// the first word that started a skill or set the goal, in the accent (#203)
+function cmd_html(blocks: string[], cmd: string | undefined): string[] {
+  const at = "<p>" + esc(cmd ?? "");
+  return cmd === undefined || blocks.length === 0 || !blocks[0].startsWith(at) ? blocks : [`<p><span class="cmd">${esc(cmd)}</span>` + blocks[0].slice(at.length), ...blocks.slice(1)];
+}
+
 function block_kept(b: Md.Block): string {
   const made = BLOCKS.get(b);
   if (made !== undefined && made.names === NAMES.key) {
@@ -163,7 +176,7 @@ function row_make(row: View.Row): string {
     }
     case "Msg": {
       const at = row.id === null ? "" : ` data-a="${row.id}"`;
-      const blocks = row.call === null ? row.body.map(block_kept) : [];
+      const blocks = row.call === null ? cmd_html(row.body.map(block_kept), row.cmd) : [];
       const body = row.call === null ? blocks.join("") : call_html(row.call);
       const pics = images_html(row.images);
       const tall = ["user", "work"].includes(row.kind) && row.text.length + 80 * row.text.split("\n").length > TALL && !row.text.includes("](/media/");

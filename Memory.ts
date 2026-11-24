@@ -17,8 +17,11 @@ export type Root = Msg & { i: number; size: number; date: string };
 // from: the agent whose message it is, by id; copy: a team line's
 // message there (a copy made before 41); mind: the reasoning that came
 // before a reply or tool call, for the chat page only: nothing shows it the
-// model, nor counts it in a size (#204)
-export type Msg = { kind: Kind; text: string; date?: string; images?: string[]; imported?: boolean; line?: string; more?: boolean; page?: boolean; act?: string; from?: string; copy?: number; mind?: string } & Pair;
+// model, nor counts it in a size (#204); lead: the user's first word
+// started a skill or set the goal, and so many characters of the skill's
+// came before the message as written, which is all the chat page shows
+// (#203)
+export type Msg = { kind: Kind; text: string; date?: string; images?: string[]; imported?: boolean; line?: string; more?: boolean; page?: boolean; act?: string; from?: string; copy?: number; mind?: string; lead?: number } & Pair;
 
 // result: a tool call's message holds its result too, after the newline
 // at result in its whole text (#188)
@@ -381,8 +384,12 @@ export namespace Memory {
     return who + ": " + root.text + pics.join("");
   }
 
-  // a call's message as its call, and its result when it holds one (#188)
-  export function call_of(m: { text: string; result?: number }): { text: string; echo?: string } {
+  // a message as the chat page shows it: a call's as its call, and its
+  // result when it holds one (#188); a user's as written (#203)
+  export function shown_of(m: { text: string; result?: number; lead?: number }): { text: string; echo?: string; cmd?: boolean } {
+    if (m.lead !== undefined) {
+      return { text: m.text.slice(m.lead), cmd: true };
+    }
     return m.result === undefined ? { text: m.text } : { text: m.text.slice(0, m.result), echo: m.text.slice(m.result + 1) };
   }
 
@@ -423,7 +430,7 @@ export namespace Memory {
       const more = k < n - 1 || msg.more === true ? true : undefined;
       const act = k === n - 1 ? msg.act : undefined;
       const page = k > 0 || msg.page === true ? true : undefined;
-      return { ...msg, date, text: texts[k - n + texts.length] ?? "", images, line: k === 0 ? msg.line : undefined, result: k === 0 ? msg.result : undefined, mind: k === 0 ? msg.mind : undefined, more, page, act };
+      return { ...msg, date, text: texts[k - n + texts.length] ?? "", images, line: k === 0 ? msg.line : undefined, result: k === 0 ? msg.result : undefined, mind: k === 0 ? msg.mind : undefined, lead: k === 0 ? msg.lead : undefined, more, page, act };
     });
   }
 

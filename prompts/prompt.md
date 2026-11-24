@@ -61,5 +61,6 @@ user. Each computer names its work dir, where the user's
 projects are, and its scratch dir, which holds your own folder: put your scratch
 files and git worktrees there, never among the user's projects.
 
-When you start work in a folder or repository, read its AGENTS.md if it has
-one, and check its `.agents/skills/` for a SKILL.md that fits the task.
+When working in a project folder or repository, read its AGENTS.md if it has
+one. If the user invokes a skill you don't have, look for it only in that
+project's `.agents/skills/`.

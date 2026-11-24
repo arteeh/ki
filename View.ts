@@ -12,14 +12,15 @@ export type Part = [number, number];
 
 // pages: a message split in memory comes whole, under its first page's id
 // (#151); echo: a tool call's result, logged in the call's message (#188);
-// mind: the reasoning that came before it (#204)
-type Entry = { kind: Kind; text: string; echo?: string; date?: string; images?: string[]; of?: string; tool?: string; from?: string; pages?: number; mind?: string };
+// mind: the reasoning that came before it (#204); cmd: its first word
+// started a skill or set the goal as it was sent (#203)
+type Entry = { kind: Kind; text: string; echo?: string; date?: string; images?: string[]; of?: string; tool?: string; from?: string; pages?: number; mind?: string; cmd?: boolean };
 
 export type Queued = { kind: Kind; text: string };
 
 // hop and from: another agent's message, the hop it is on and whose it is;
 // origin: the chat its chain of messages started in
-export type Pending = Queued & { images: string[]; act?: string; hop?: number; from?: string; origin?: string };
+export type Pending = Queued & { images: string[]; act?: string; hop?: number; from?: string; origin?: string; lead?: number };
 
 type Of = { tool: string; apart: boolean };
 
@@ -88,6 +89,7 @@ type ServerSays = {
   agent?    : string;
   thinking? : boolean;
   build?    : string;
+  skills?   : Slash[];
 };
 
 type State = Turning & ByRun & Offered & ChatSet & ServerSays;
@@ -95,6 +97,19 @@ type State = Turning & ByRun & Offered & ChatSet & ServerSays;
 export type Talk = { from: number; used: number; tokens: number; input: number; model: string; guess: boolean };
 
 export type Plug = { name: string; on: boolean };
+
+// what the composer's / list offers (#203): a skill on the devices open
+// now, or one of Ki's commands; hint: its argument-hint
+export type Slash = { name: string; about: string; hint?: string };
+
+// Ki's own commands, for the / list and the composer's send alike: what
+// one sends, or why it sends nothing
+type Command = Slash & { act: (rest: string, say: Client) => Client[] | string };
+
+const COMMANDS: Command[] = [
+  { name: "goal", about: "Set a goal for the chat, checked after each turn until it is met, and send the message", act: (rest, say) => (rest === "" ? "/goal needs one: /goal <message>." : [{ $: "goal", text: rest }, say]) },
+  { name: "halt", about: "Drop the chat's goal", act: () => [{ $: "goal", text: null }] },
+];
 
 // a shell call's command that outlasted its call and still runs on its
 // device, as job id (#198)
@@ -168,7 +183,7 @@ type Upload = BodyInit | AsyncIterable<string>;
 type Body   = () => Upload | Promise<Upload>;
 
 export type Client =
-  | { $: "say"; sizes: number[]; body: Body; agent?: string }
+  | { $: "say"; sizes: number[]; body: Body; agent?: string; skill?: string }
   | { $: "import"; body: Body; agent: string }
   | { $: "voice"; type: string; body: Body }
   | { $: "stop" }
@@ -207,7 +222,7 @@ export type Act =
 export type Row =
   | { $: "Sum"; id: number; n: number; msgs: number; text: string }
   | { $: "Box"; id: number; n: number; msgs: number; text: string; rows: Row[] }
-  | { $: "Msg"; id: number | null; kind: Kind; who: string; text: string; body: Md.Block[]; call: Call.Call | null; images: string[]; queued?: boolean; from?: string; of?: string; writing?: true }
+  | { $: "Msg"; id: number | null; kind: Kind; who: string; text: string; body: Md.Block[]; call: Call.Call | null; images: string[]; queued?: boolean; from?: string; of?: string; writing?: true; cmd?: string }
   | { $: "Line"; id: number | null; call: Call.Call; echo: string | null; rows: Row[]; phase?: Phase }
   | { $: "Group"; id: number | null; lines: Line[]; phase?: Phase }
   | { $: "Cap"; text: string; think?: true; earlier?: true; wait?: true }
@@ -559,8 +574,8 @@ export function view_copy(v: View, from: number): Server[] {
       nodes[id + "+" + n] = node;
     }
   }
-  const { busy, wait, sums, again, importing, limit, queue, sent, pick, vendors, models, profiles, timers, mcp, talk, bg, thinking } = v;
-  const state = { busy, wait, sums, again, importing, limit, queue, sent, pick, vendors, models, profiles, timers, mcp, talk, bg, thinking };
+  const { busy, wait, sums, again, importing, limit, queue, sent, pick, vendors, models, profiles, timers, mcp, talk, bg, thinking, skills } = v;
+  const state = { busy, wait, sums, again, importing, limit, queue, sent, pick, vendors, models, profiles, timers, mcp, talk, bg, thinking, skills };
   return [{ $: "state", agent: v.agent, ...state }, { $: "know", nodes, whole }, { $: "view", parts, turn: v.turn }, { $: "live", live: v.live }];
 }
 
@@ -596,7 +611,7 @@ export function view_adopt(v: View, copy: Server[]): void {
   if (v.held !== "" || made.held !== v.agent) {
     return;
   }
-  for (const k of [...CHAT, "vendors", "models", "profiles", "thinking"] as const) {
+  for (const k of [...CHAT, "vendors", "models", "profiles", "thinking", "skills"] as const) {
     Object.assign(v, { [k]: made[k] });
   }
   v.held = v.agent;
@@ -607,25 +622,22 @@ export function view_act(v: View, act: Act): Client[] {
     case "Send": {
       const text   = act.text.trim();
       const images = act.images ?? [];
-      const word   = /^\/[a-z]+(?=\s|$)/i.exec(text)?.[0];
-      const goal   = word === "/goal" ? text.slice(word.length).trim() : null;
       if (text === "" && images.length === 0) {
         return view_stoppable(v) ? [{ $: "stop" }] : [];
       }
-      if (word === "/halt") {
-        return [{ $: "goal", text: null }];
-      }
-      if (goal === "") {
-        v.notes.push("/goal needs one: /goal <message>.");
-        return [];
-      }
-      if (word !== undefined && goal === null) {
-        v.notes.push(word + " is no command; nothing was sent.");
-        return [];
-      }
+      // any other /word is text; a skill the list has, the server's to
+      // start, or to say it found none (#203)
+      const word = /^\/(\S+)(?:\s|$)/.exec(text);
+      const command = COMMANDS.find((c) => c.name === word?.[1]);
+      const skill = command === undefined ? v.skills?.find((s) => s.name === word?.[1])?.name : undefined;
       const blob = new Blob([...images, text]);
-      const say: Client = { $: "say", sizes: images.map((b) => b.size), body: () => blob };
-      return goal === null ? [say] : [{ $: "goal", text: goal }, say];
+      const say: Client = { $: "say", sizes: images.map((b) => b.size), body: () => blob, ...(skill === undefined ? {} : { skill }) };
+      const sent = command === undefined || word === null ? [say] : command.act(text.slice(word[0].length).trim(), say);
+      if (typeof sent === "string") {
+        v.notes.push(sent);
+        return [];
+      }
+      return sent;
     }
     case "Move": {
       const from = v.out.flatMap((p) => (p.msg.$ === "pick" ? [p.msg.to] : [])).at(-1) ?? v.pick;
@@ -1211,9 +1223,28 @@ function mind_rows(entry: Entry): Row[] {
 function whole_rows(id: number | null, entry: Entry, before: Entry | undefined): Row[] {
   const of = entry_of(entry, before);
   const made = of.apart ? APART : ROWS;
-  const rows = made.get(entry) ?? (entry.echo === undefined ? entry_rows(id, entry.kind, entry.text, entry.images, of, entry.from, entry.of) : pair_rows(id, entry, entry.echo));
+  const rows = made.get(entry) ?? (entry.echo === undefined ? cmd_rows(entry, entry_rows(id, entry.kind, entry.text, entry.images, of, entry.from, entry.of)) : pair_rows(id, entry, entry.echo));
   made.set(entry, rows);
   return rows;
+}
+
+// a message whose first word started a skill or set the goal shows it so
+function cmd_rows(entry: Entry, rows: Row[]): Row[] {
+  const cmd = entry.cmd === true ? /^\/\S+/.exec(entry.text)?.[0] : undefined;
+  return cmd === undefined ? rows : rows.map((r) => (r.$ === "Msg" ? { ...r, cmd } : r));
+}
+
+// the / list for the composer's text (#203): while it is one word after a
+// / at its start, Ki's commands and the skills whose names hold it, those
+// that start with it first
+export function view_slash(v: View, text: string): Slash[] {
+  const typed = /^\/(\S*)$/.exec(text)?.[1].toLowerCase();
+  if (typed === undefined) {
+    return [];
+  }
+  const all = [...COMMANDS.map(({ name, about }) => ({ name, about })), ...(v.skills ?? []).filter((s) => !COMMANDS.some((c) => c.name === s.name))];
+  const name = (s: Slash) => s.name.toLowerCase();
+  return [...all.filter((s) => name(s).startsWith(typed)), ...all.filter((s) => !name(s).startsWith(typed) && name(s).includes(typed))];
 }
 
 // a call logged with its result: the one line they make (view_lines)

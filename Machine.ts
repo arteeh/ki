@@ -18,7 +18,11 @@ type Probe = {
 
 export type Spec = { name: string; info: string; schema: object };
 
-export type Skill = { name: string; description: string; dir: string };
+// a skill on a device (#203): its SKILL.md, modified at; hint: its
+// argument-hint; model: the agent may use it on its own (no
+// disable-model-invocation); user: the user may start it (no
+// user-invocable: false)
+export type Skill = { name: string; description: string; file: string; at: number; hint?: string; model: boolean; user: boolean };
 
 type Op = { s: " " | "-" | "+"; x: string };
 
@@ -59,6 +63,9 @@ const BORN = 1000;
 const STOPPED = new Set<Bun.Subprocess>();
 
 const GONE = 3000;
+
+// the biggest SKILL.md the server puts before a message
+const SKILL_MOST = 256 * 1024;
 
 const CONTEXT = 3;
 
@@ -160,8 +167,8 @@ export namespace Machine {
         case "skills": {
           return { text: JSON.stringify(Machine.skills(os.homedir())), fail: false };
         }
-        case "skill": {
-          return Machine.skill(os.homedir(), String(input.name));
+        case "skill_file": {
+          return Machine.skill_file(String(input.file));
         }
         case "drop": {
           const agent = path.basename(String(input.agent));
@@ -693,35 +700,48 @@ export namespace Machine {
     return { text: diffs.join("\n"), fail: false };
   }
 
+  // the skills in ~/.agents/skills, one per name, the newest SKILL.md's;
+  // read as leniently as the Agent Skills guide asks (#203): a description
+  // is all a skill needs, its name as written or else its folder's
   export function skills(home: string): Skill[] {
     const found = new Map<string, Skill>();
-    const root = home + "/.agents/skills";
+    const root = path.join(home, ".agents", "skills");
     let names: string[] = [];
     try {
       names = fs.readdirSync(root).sort();
     } catch {}
-    for (const name of names) {
-      const file = path.join(root, name, "SKILL.md");
+    for (const folder of names) {
+      const file = path.join(root, folder, "SKILL.md");
       let head: unknown = null;
+      let at = 0;
       try {
         head = skill_head(file);
+        at = fs.statSync(file).mtimeMs;
       } catch {}
-      const [named, description] = [get(head, "name"), get(head, "description")];
-      const ok = typeof named === "string" && /^[a-z0-9-]{1,64}$/.test(named) && typeof description === "string" && description.trim() !== "";
-      if (ok && !found.has(named)) {
-        found.set(named, { name: named, description: description.trim().slice(0, 1024), dir: path.dirname(file) });
+      const [named, description, hint] = [get(head, "name"), get(head, "description"), get(head, "argument-hint")];
+      if (typeof description !== "string" || description.trim() === "") {
+        continue;
+      }
+      const name = typeof named === "string" && named !== "" && !/[\s/]/.test(named) ? named : folder;
+      const shown = typeof hint === "string" ? hint.trim() : Array.isArray(hint) ? hint.map((h) => "[" + String(h) + "]").join(" ") : "";
+      const skill: Skill = { name, description: description.trim().slice(0, 1024), file, at, ...(shown === "" ? {} : { hint: shown }), model: get(head, "disable-model-invocation") !== true, user: get(head, "user-invocable") !== false };
+      if ((found.get(name)?.at ?? -1) < at) {
+        found.set(name, skill);
       }
     }
     return [...found.values()];
   }
 
-  export function skill(home: string, name: string): Out {
-    const skill = Machine.skills(home).find((s) => s.name === name);
-    if (skill === undefined) {
-      return { text: "No skill " + name + " here.", fail: true };
+  // a SKILL.md's whole text, for the server to put before the message
+  // that starts it
+  export function skill_file(file: string): Out {
+    if (path.basename(file) !== "SKILL.md" || !fs.statSync(file).isFile()) {
+      return { text: file + " is no SKILL.md.", fail: true };
     }
-    const text = fs.readFileSync(skill.dir + "/SKILL.md", "utf8");
-    return { text: "Skill " + name + ", in " + skill.dir + " (its other files are there):\n\n" + text, fail: false };
+    if (fs.statSync(file).size > SKILL_MOST) {
+      return { text: file + " is over " + SKILL_MOST / 1024 + " KB.", fail: true };
+    }
+    return { text: fs.readFileSync(file, "utf8"), fail: false };
   }
 
   export function nap(ms: number, signal: AbortSignal): Promise<void> {
@@ -739,7 +759,10 @@ export namespace Machine {
 }
 
 // a SKILL.md's YAML frontmatter, from its first 64 KB; a regular file only,
-// so a FIFO or device can't hang the device
+// so a FIFO or device can't hang the device. One that isn't YAML is read
+// again with each top-level value that holds ": " a plain string, the
+// unquoted colon of skills written for other tools, and so an
+// argument-hint ("[file] [pages]")
 function skill_head(file: string): unknown {
   if (!fs.statSync(file).isFile()) {
     return null;
@@ -750,7 +773,15 @@ function skill_head(file: string): unknown {
   fs.closeSync(fd);
   const text = buf.toString("utf8", 0, size).replace(/^\uFEFF/, "");
   const m = text.match(/^---\r?\n([\s\S]*?)\r?\n---\r?(\n|$)/);
-  return m === null ? null : Bun.YAML.parse(m[1]);
+  if (m === null) {
+    return null;
+  }
+  try {
+    return Bun.YAML.parse(m[1]);
+  } catch {
+    const plain = m[1].replace(/^([A-Za-z0-9_-]+):[ \t]+(.*?)[ \t]*$/gm, (line, key: string, value: string) => (/^["']/.test(value) || !(value.includes(": ") || key === "argument-hint") ? line : key + ": " + JSON.stringify(value)));
+    return Bun.YAML.parse(plain);
+  }
 }
 
 function text_diff(file: string, was: string, now: string): string {

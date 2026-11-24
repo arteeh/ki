@@ -18,7 +18,7 @@ Features
 - **Images, video, audio and HTML pages inline** for the agent to show you things, or for you to show the agent.
 - **Conversation mode** for when you want a short continuous back-and-forth without the agent forgetting anything you said (shout out to /grill-me!).
 - **MCP servers** per device. Ask your agent to set them up on your preferred device.
-- **Skills** read from the ~/.agents/skills folder.
+- **Skills** read from the ~/.agents/skills folder of each device; type `/` to start one, or `/goal` and `/halt` to set or drop a goal the agent works to.
 - **An installable web app (PWA)** on phones and desktops: icons, an offline shell that opens on your chats as you last saw them, Web Push for replies, a nav bar that shows on Android; the composer stays above a phone's keyboard.
 - **Don't start from scratch.** Import past conversations from Claude Code or Codex into an agent's memory tree, from its settings.
 

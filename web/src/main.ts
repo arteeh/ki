@@ -381,9 +381,21 @@ function chat(): void {
   // never the Enter that ends a composition (Japanese, Chinese: Safari
   // ends it first, so only its keyCode, 229, says so)
   BOX.onkeydown = (ev) => {
+    if (slash_key(ev)) {
+      ev.preventDefault();
+      return;
+    }
     if (ev.key === "Enter" && !ev.shiftKey && !ev.isComposing && ev.keyCode !== 229 && DESK.matches) {
       ev.preventDefault();
       submit();
+    }
+  };
+  // a press on the / list keeps the composer's focus, its click picks
+  $("#slash").onpointerdown = (ev) => ev.preventDefault();
+  $("#slash").onclick = (ev) => {
+    const name = ev.target instanceof Element ? ev.target.closest<HTMLElement>("[data-name]")?.dataset.name : undefined;
+    if (name !== undefined) {
+      slash_pick(name);
     }
   };
   $("form").onsubmit = (ev) => {
@@ -502,6 +514,54 @@ function typed(): void {
     }
   }
   draw(true);
+}
+
+// the / list over the composer (#203): at, the entry the arrow keys are
+// on, for the text typed; shut, the text Escape closed it on, until the
+// text changes
+const SLASH = { at: 0, text: "", shut: "" };
+
+function slash_items(): View.Slash[] {
+  const text = Box.box_text();
+  return text === SLASH.shut ? [] : View.view_slash(v, text);
+}
+
+function slash_draw(): void {
+  const text = Box.box_text();
+  if (text !== SLASH.text) {
+    [SLASH.at, SLASH.text] = [0, text];
+  }
+  const items = slash_items();
+  SLASH.at = Math.min(SLASH.at, Math.max(0, items.length - 1));
+  const el = $("#slash");
+  el.hidden = items.length === 0;
+  markup(el, items.map((s, k) => Html.slash_html(s, k === SLASH.at)));
+  el.querySelector(".on")?.scrollIntoView({ block: "nearest" });
+}
+
+// the keys the open list takes: Up and Down move, Enter (where it sends)
+// and Tab pick, Escape closes it
+function slash_key(ev: KeyboardEvent): boolean {
+  const items = slash_items();
+  if (items.length === 0 || ev.isComposing) {
+    return false;
+  }
+  if (ev.key === "ArrowDown" || ev.key === "ArrowUp") {
+    SLASH.at = (SLASH.at + (ev.key === "ArrowDown" ? 1 : items.length - 1)) % items.length;
+  } else if (ev.key === "Tab" || (ev.key === "Enter" && !ev.shiftKey && DESK.matches)) {
+    slash_pick(items[SLASH.at].name);
+  } else if (ev.key === "Escape") {
+    SLASH.shut = Box.box_text();
+  } else {
+    return false;
+  }
+  slash_draw();
+  return true;
+}
+
+function slash_pick(name: string): void {
+  Box.box_focus();
+  Box.box_set("/" + name + " ");
 }
 
 function submit(): void {
@@ -1459,6 +1519,7 @@ function bars(): void {
   for (const note of v.notes.splice(0)) {
     toast(note);
   }
+  slash_draw();
   if (RENEW.due && !RENEW.going && renew_free()) {
     RENEW.going = true;
     setTimeout(() => void renew());
