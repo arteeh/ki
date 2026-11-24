@@ -1,11 +1,11 @@
 import type { Ask, Img } from "./AskAI.ts";
 import { Agent, type Emit, type Entry, type Item, type Step, type Tool, type Use, type Wire } from "./Agent.ts";
 import * as config from "./Config.ts";
-import { get, str, text_of } from "./Json.ts";
+import { get, list, rec, str, text_of } from "./Json.ts";
 
 type Content = { type: string; text?: string; refusal?: string; annotations?: { type: string; title?: string; url?: string }[] };
 
-export type Output = { type: string; call_id?: string; name?: string; arguments?: string; summary?: { text: string }[]; content?: Content[]; action?: unknown };
+export type Output = { type: string; id?: string; status?: string; call_id?: string; name?: string; arguments?: string; summary?: { text: string }[]; content?: Content[]; action?: unknown };
 
 type Fail = { code?: string; message?: string } | null;
 
@@ -13,7 +13,7 @@ type Usage = { input_tokens?: unknown; input_tokens_details?: { cached_tokens?: 
 
 type Res = { status?: string; error?: Fail; output?: Output[]; usage?: Usage; service_tier?: string; incomplete_details?: { reason?: string } };
 
-export type Event = { type: string; delta?: string; item?: Output; response?: Res; error?: Fail; code?: string; message?: string; summary_index?: number; output_index?: number };
+export type Event = { type: string; delta?: string; item?: Output; item_id?: string; response?: Res; error?: Fail; code?: string; message?: string; summary_index?: number; output_index?: number };
 
 export type State = { res: Res | null; error: Fail };
 
@@ -22,6 +22,9 @@ const TIERS: Record<string, string> = { slow: "default", fast: "fast", ultrafast
 const MARK = { mode: "explicit" };
 
 const TRANSCRIBER = "gpt-transcribe";
+
+// the pages a web search consulted, its result (#205)
+const SOURCES = "web_search_call.action.sources";
 
 // Ki's tools whose optional arguments stay optional: OpenAI makes a tool
 // with no strict strict, every argument required, and a model then fills
@@ -49,6 +52,7 @@ export namespace OpenAI {
       reasoning            : { effort: ask.effort === "" ? undefined : ask.effort, summary: ask.minds === true ? "auto" : undefined, context: "all_turns" },
       max_output_tokens    : max,
       max_tool_calls       : ask.searches || undefined,
+      include              : ask.searches > 0 ? [SOURCES] : undefined,
       service_tier         : tier,
       prompt_cache_options : cache,
       prompt_cache_key     : OpenAI.session(ask),
@@ -101,11 +105,15 @@ export namespace OpenAI {
         OpenAI.live(ev.item ?? { type: "" }, on);
         return false;
       }
-      // a search's query comes only with its item done
+      // a search's query comes only with its item done, which ends its row
       case "response.output_item.done": {
         if (ev.item?.type === "web_search_call") {
-          on("tool", JSON.stringify(ev.item.action ?? {}));
+          on("tool", JSON.stringify(OpenAI.action(ev.item)), false, { item: ev.item.id ?? "", done: true });
         }
+        return false;
+      }
+      case "response.web_search_call.completed": {
+        on("tool", "", false, { item: ev.item_id ?? "", done: true });
         return false;
       }
       case "response.function_call_arguments.delta": {
@@ -141,7 +149,7 @@ export namespace OpenAI {
       on("tool", (item.name ?? "") + " ", true);
     }
     if (item.type === "web_search_call") {
-      on("tool", "web_search ", true);
+      on("tool", "web_search ", true, { item: item.id ?? "" });
     }
     if (item.type === "reasoning") {
       on("mind", "", true);
@@ -194,17 +202,34 @@ export namespace OpenAI {
         const urls = content.flatMap((c) => c.annotations ?? []).filter((a) => a.type === "url_citation");
         const cited = [...new Set(urls.map((a) => String(a.title) + " " + String(a.url)))];
         const reply: Entry[] = text ? [{ kind: "reply", text }] : [];
-        const sources: Entry[] = cited.length > 0 ? [{ kind: "echo", text: "sources:\n" + cited.join("\n") }] : [];
+        const sources: Entry[] = cited.length > 0 ? [{ kind: "echo", text: "sources:\n" + cited.join("\n"), alone: true }] : [];
         return [...reply, ...sources];
       }
       case "function_call": {
         return [{ kind: "tool", text: String(o.name) + " " + String(o.arguments), of: o.call_id }];
       }
       case "web_search_call": {
-        return [{ kind: "tool", text: "web_search " + JSON.stringify(o.action ?? {}) }];
+        const of = o.id ?? "ki-" + crypto.randomUUID();
+        return [{ kind: "tool", text: "web_search " + JSON.stringify(OpenAI.action(o)), of }, { kind: "echo", text: OpenAI.searched(o), of }];
       }
     }
     return [];
+  }
+
+  // a web search's action, its sources left for its result
+  export function action(o: Output): unknown {
+    const rest: Record<string, unknown> = { ...(rec(o.action) ? o.action : {}) };
+    delete rest.sources;
+    return rest;
+  }
+
+  // a web search's result: the pages it consulted, as far as OpenAI says
+  export function searched(o: Output): string {
+    if (o.status !== "completed") {
+      return "error: OpenAI says it " + (o.status === "failed" ? "failed" : "is " + (o.status ?? "of no status"));
+    }
+    const urls = [...new Set(list(get(o.action, "sources")).map((x) => get(x, "url")).filter((u) => typeof u === "string"))];
+    return urls.length > 0 ? "sources:\n" + urls.join("\n") : "Done. OpenAI gives no details of what it found.";
   }
 
   export async function transcribe(audio: Blob): Promise<{ text: string | undefined }> {

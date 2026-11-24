@@ -9,6 +9,7 @@ import * as Prompts from "./Prompts.ts";
 import * as config from "./Config.ts";
 import { err_why } from "./Err.ts";
 import { get, text_of } from "./Json.ts";
+import type { At } from "./View.ts";
 
 export type Kind = "user" | "work" | "mind" | "reply" | "tool" | "echo" | "note" | "team";
 
@@ -67,7 +68,7 @@ export type Parked = { until: number; known: boolean; vendor: Vendor; why?: stri
 export type Again = { why: string; until: number; limit: boolean };
 
 export type Event =
-  | { $: "Delta"; kind: Kind; text: string; fresh?: boolean }
+  | { $: "Delta"; kind: Kind; text: string; fresh?: boolean; at?: At }
   | { $: "Entry"; kind: Kind; text: string; of?: string; queued?: boolean }
   | { $: "Start"; of: string }
   | { $: "Limit"; limit: Parked | null }

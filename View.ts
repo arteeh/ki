@@ -25,8 +25,11 @@ type Of = { tool: string; apart: boolean };
 
 type Node = { text: string; to: string };
 
-// of: a tool call's id, while it waits for its result
-export type Live = { kind: Kind; text: string; of?: string };
+// of: a tool call's id, while it waits for its result; at: the vendor's
+// output item it streams, by its id, done once that item ended (#205)
+export type Live = { kind: Kind; text: string; of?: string; at?: At };
+
+export type At = { item: string; done?: boolean };
 
 // an agent as the chat list shows it: last, its last message's gist
 export type Mate = { id: string; name: string; about: string; picture: string; unread: number; last: string; busy: boolean; archived: number; subs?: SubRow[] };
@@ -147,7 +150,7 @@ export type Server =
   | { $: "view"; parts: Part[]; turn: number }
   | { $: "zoom"; id: number; n: number; parts: Part[] }
   | ({ $: "entry"; agent?: string; id?: number; sent?: boolean } & Entry)
-  | { $: "delta"; agent?: string; kind: Kind; text: string; fresh?: boolean }
+  | { $: "delta"; agent?: string; kind: Kind; text: string; fresh?: boolean; at?: At }
   | { $: "live"; agent?: string; live: Live[] }
   | { $: "agent"; name: string; found: boolean; from: number; before?: number; entries: Logged[]; done: boolean; end?: boolean; how?: How | null }
   | ({ $: "state"; replaced?: string } & State)
@@ -497,7 +500,7 @@ function view_heard(v: View, msg: Server): Client[] {
     case "delta": {
       const live = msg.agent === undefined ? v.live : v.pages.get(msg.agent)?.live;
       if (live !== undefined) {
-        live_push(live, msg.kind, msg.text, msg.fresh);
+        live_push(live, msg.kind, msg.text, msg.fresh, msg.at);
       }
       return [];
     }
@@ -796,7 +799,7 @@ function thinks(live: Live[], k: number): boolean {
 function live_rows(live: Live[], writing: boolean): Row[] {
   return live.flatMap((l, k) => l.kind === "mind" && l.text === "" ? (thinks(live, k) ? [THINKING] : []) : view_lines(entry_rows(null, l.kind, l.text, [], undefined, undefined, l.of)).map((r): Row => {
     if (r.$ === "Line") {
-      return { ...r, phase: l.of === undefined ? "typing" : "running" };
+      return l.of === undefined && l.at?.done === true ? r : { ...r, phase: l.of === undefined ? "typing" : "running" };
     }
     return r.$ === "Msg" && l.kind === "reply" && writing && k === live.length - 1 ? { ...r, writing: true } : r;
   }));
@@ -1243,12 +1246,15 @@ function sent_rows(sent: boolean, rows: Row[]): Row[] {
   }) : rows;
 }
 
-export function live_push(live: Live[], kind: Kind, text: string, fresh = false): void {
-  const top = live[live.length - 1];
+// a delta of an output item (at) goes to that item's own entry, and may
+// end it
+export function live_push(live: Live[], kind: Kind, text: string, fresh = false, at?: At): void {
+  const top = at === undefined ? live[live.length - 1] : live.findLast((l) => l.at?.item === at.item);
   if (top !== undefined && top.kind === kind && !fresh) {
     top.text += text;
-  } else {
-    live.push({ kind, text });
+    top.at = at === undefined || top.at?.done === true ? top.at : at;
+  } else if (at === undefined || fresh || text !== "") {
+    live.push({ kind, text, ...(at === undefined ? {} : { at }) });
   }
 }
 

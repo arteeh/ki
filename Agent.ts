@@ -3,7 +3,7 @@ import { Anthropic } from "./Anthropic.ts";
 import { OpenAI } from "./OpenAI.ts";
 import { ChatGPT } from "./ChatGPT.ts";
 import { Limit } from "./Limit.ts";
-import { live_push } from "./View.ts";
+import { live_push, type At } from "./View.ts";
 import { Machine, type Spec } from "./Machine.ts";
 import * as config from "./Config.ts";
 import { err_why } from "./Err.ts";
@@ -34,7 +34,8 @@ export type Item =
 
 export type Use = { id: string; name: string; input: unknown };
 
-export type Entry = { kind: Kind; text: string; of?: string };
+// alone: a result of no call, left so (OpenAI's answer citations, #205)
+export type Entry = { kind: Kind; text: string; of?: string; alone?: boolean };
 
 // open: a server tool call it made runs only with the next request (a client
 // call beside it came first), so only tool results may follow it; container:
@@ -56,7 +57,7 @@ export type Step = {
 
 export type Refusal = { why: string; say: string; until?: number };
 
-export type Emit = (kind: Kind, text: string, fresh?: boolean) => void;
+export type Emit = (kind: Kind, text: string, fresh?: boolean, at?: At) => void;
 
 type Part = { type: string; text?: string; mimeType?: string; data?: string };
 
@@ -258,24 +259,18 @@ export namespace Agent {
     return Agent.paired(step.entries).map((entry) => ({ $: "Entry", ...entry, ...(entry.kind === "tool" && entry.of !== undefined && ours.has(entry.of) ? { queued: true } : {}) }));
   }
 
-  // a step's call and result with no id, a web search's and the sources
-  // its answer cites, pair by order (#188): a call with none takes the next
-  // result with none; one with no such call goes in the step's last web
-  // result before it
+  // a step's result of no call, the sources its answer cites, goes in the
+  // step's last web result before it (Anthropic's, #188)
   export function paired(entries: Entry[]): Entry[] {
     const out = entries.map((e) => ({ ...e }));
     const web = (r: Entry) => out.some((c) => c.kind === "tool" && c.of === r.of && /^web_(search|fetch) /.test(c.text));
     const gone = new Set<Entry>();
     out.forEach((e, k) => {
-      if (e.kind !== "echo" || e.of !== undefined) {
+      if (e.kind !== "echo" || e.of !== undefined || e.alone === true) {
         return;
       }
-      const before = out.slice(0, k);
-      const call = before.find((c) => c.kind === "tool" && c.of === undefined);
-      const last = before.findLast((r) => r.kind === "echo" && r.of !== undefined && !gone.has(r) && web(r));
-      if (call !== undefined) {
-        call.of = e.of = "ki-" + crypto.randomUUID();
-      } else if (last !== undefined) {
+      const last = out.slice(0, k).findLast((r) => r.kind === "echo" && r.of !== undefined && web(r));
+      if (last !== undefined) {
         last.text += "\n" + e.text;
         gone.add(e);
       }
@@ -449,10 +444,10 @@ export namespace Agent {
 
   export async function stream<S, E>(wire: Wire<S, E>, run: Doing, body: ReadableStream<Uint8Array>, timer: Timer, seen: Entry[], st: S, begun: () => void): Promise<Step> {
     const ask = run.ask;
-    const on: Emit = (kind, text, fresh) => {
+    const on: Emit = (kind, text, fresh, at) => {
       if (!run.abort.signal.aborted) {
-        live_push(seen, kind, text, fresh);
-        run.on({ $: "Delta", kind, text, fresh });
+        live_push(seen, kind, text, fresh, at);
+        run.on({ $: "Delta", kind, text, fresh, at });
       }
     };
     try {

@@ -1,5 +1,5 @@
 import * as crypto from "node:crypto";
-import { get, list, str } from "../../Json.ts";
+import { get, list, rec, str } from "../../Json.ts";
 import { CASES, type Kind, type Vendor } from "./cases.ts";
 
 export type Order =
@@ -16,8 +16,10 @@ type Seen = { n: number; at: string; vendor: string; path: string; model: string
 type Used = { input: number; read: number; write: number };
 
 // pace: ms between one block's end and the next's start; minds: the
-// request asked for reasoning text, which a vendor otherwise leaves out
-type Sent = { blocks: Array<{ text: string } | { id: string; name: string; json: string } | { think: string }>; stall: number; cut: boolean; pace: number; minds: boolean };
+// request asked for reasoning text, which a vendor otherwise leaves out;
+// search: OpenAI's own web search, of that action; sources: the request
+// asked for the pages a search consulted
+type Sent = { blocks: Array<{ text: string } | { id: string; name: string; json: string } | { think: string } | { search: Record<string, unknown> }>; stall: number; cut: boolean; pace: number; minds: boolean; sources: boolean };
 
 export const CONTROL = 9999;
 
@@ -187,7 +189,7 @@ function anthropic(vendor: Vendor, model: string, sent: Sent, used: Used): Respo
       events.push(["ping", { type: "ping" }]);
       chunks(b.text).forEach((text) => events.push(["content_block_delta", { type: "content_block_delta", index, delta: { type: "text_delta", text } }]));
       out += tokens(b.text);
-    } else {
+    } else if ("id" in b) {
       events.push(["content_block_start", { type: "content_block_start", index, content_block: { type: "tool_use", id: b.id, name: b.name, input: {}, caller: { type: "direct" } } }]);
       events.push(["ping", { type: "ping" }]);
       (b.json.match(/.{1,12}/gs) ?? [""]).forEach((partial_json) => events.push(["content_block_delta", { type: "content_block_delta", index, delta: { type: "input_json_delta", partial_json } }]));
@@ -249,7 +251,28 @@ function openai(vendor: Vendor, model: string, sent: Sent, used: Used): Response
       done.push(whole);
       return;
     }
-    if ("text" in b) {
+    if ("search" in b) {
+      // as chatgpt.com streamed gpt-6-luna's, 2026-11-24; its "status" and
+      // "quiet" (no web_search_call events) are the fake's, not the action's
+      const { status = "completed", quiet, ...act } = b.search;
+      const action = sent.sources ? act : { ...act, sources: undefined };
+      const item = { id: hex("ws_"), type: "web_search_call", status: "in_progress" };
+      const step = (type: string) => {
+        if (quiet !== true) {
+          ev("response.web_search_call." + type, { item_id: item.id, output_index });
+        }
+      };
+      ev("response.output_item.added", { output_index, item });
+      step("in_progress");
+      step("searching");
+      events.push(["pause", { ms: 1000 }]);
+      if (status === "completed") {
+        step("completed");
+      }
+      const whole = { ...item, status, action };
+      ev("response.output_item.done", { output_index, item: whole });
+      done.push(whole);
+    } else if ("text" in b) {
       const item_id = hex("msg_");
       const part = { type: "output_text", annotations: [], logprobs: [], text: "" };
       ev("response.output_item.added", { output_index, item: { id: item_id, type: "message", status: "in_progress", content: [], role: "assistant" } });
@@ -372,11 +395,14 @@ async function model(req: Request, vendor: Vendor, url: URL): Promise<Response> 
   }
   const named = (n: string) => tools.find((t) => t === n || t.endsWith("__" + n)) ?? n;
   const think = (order.what === "reply" || order.what === "tool") && order.think !== undefined ? [{ think: order.think }] : [];
-  const blocks: Sent["blocks"] = order.what === "tool"
-    ? [...think, ...order.calls.map(([n, input]) => ({ id: claude ? id("toolu_01") : id("call_"), name: named(n), json: JSON.stringify(input) }))]
-    : [...think, { text: order.what === "reply" ? order.text : "ok" }];
+  const hosted = (n: string) => !claude && n === "web_search" && tools.includes("web_search");
+  const calls: Sent["blocks"] = order.what === "tool" ? order.calls.map(([n, input]) => (hosted(n) ? { search: rec(input) ? input : {} } : { id: claude ? id("toolu_01") : id("call_"), name: named(n), json: JSON.stringify(input) })) : [];
+  // a response of searches only goes on to its answer, as OpenAI's does
+  const answer = calls.length > 0 && calls.every((b) => "search" in b) ? [{ text: "ok" }] : [];
+  const blocks: Sent["blocks"] = order.what === "tool" ? [...think, ...calls, ...answer] : [...think, { text: order.what === "reply" ? order.text : "ok" }];
   const minds = claude ? get(get(body, "thinking"), "display") === "summarized" : get(get(body, "reasoning"), "summary") !== undefined;
-  const sent: Sent = { blocks, stall: order.what === "stall" ? order.ms : 0, cut: order.what === "cut", pace: order.what === "tool" ? order.pace ?? 0 : 0, minds };
+  const sources = list(get(body, "include")).includes("web_search_call.action.sources");
+  const sent: Sent = { blocks, stall: order.what === "stall" ? order.ms : 0, cut: order.what === "cut", pace: order.what === "tool" ? order.pace ?? 0 : 0, minds, sources };
   const used = cache(got.segs, got.marks);
   return claude ? anthropic(vendor, name, sent, used) : openai(vendor, name, sent, used);
 }

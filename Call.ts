@@ -26,6 +26,7 @@ const READS = new Map<string, (x: Input) => Shown>([
   ["tell",     (x) => said_show(x.name, x.message)],
   ["stop",     (x) => ({ head: text_of(x.name), blocks: text_block(x.why) })],
   ["stop_job", (x) => ({ head: text_of(x.job), blocks: [] })],
+  ["web_search", (x) => (typeof x.type === "string" ? search_shown(x) : input_shown(x))],
   ["schedule", (x) => ({ head: (x.cron === undefined ? text_of(x.at) : "cron " + text_of(x.cron, "null")) + " " + text_of(x.zone), blocks: text_block(x.message) })],
 ]);
 
@@ -79,6 +80,21 @@ function input_shown(input: Input): Shown {
     }
   }
   return { head: args.join(" "), blocks };
+}
+
+// an OpenAI web search's action (#205): its query, and each other distinct
+// one in order, the page it opened, what it found in one
+function search_shown(x: Input): Shown {
+  const url = typeof x.url === "string" ? x.url : "";
+  if (x.type === "open_page") {
+    return { head: url, blocks: [] };
+  }
+  if (x.type === "find_in_page") {
+    return { head: text_of(x.pattern) + (url === "" ? "" : " in " + url), blocks: [] };
+  }
+  const queries = [...new Set([...list(x.queries), x.query].filter((q): q is string => typeof q === "string" && q.trim() !== ""))];
+  const [first = "", ...more] = queries;
+  return { head: first, blocks: more.length > 0 ? [{ $: "Code", k: "also", x: more.join("\n") }] : [] };
 }
 
 function text_block(x: unknown): Md.Code[] {

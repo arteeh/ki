@@ -267,7 +267,7 @@ export namespace ChatGPT {
       reasoning           : api.reasoning,
       store               : false,
       stream              : true,
-      include             : ["reasoning.encrypted_content"],
+      include             : ["reasoning.encrypted_content", ...(api.include ?? [])],
       service_tier        : ask.speed === "fast" ? "priority" : undefined,
       prompt_cache_key    : api.prompt_cache_key,
     };
@@ -297,10 +297,18 @@ export namespace ChatGPT {
   }
 
   // one stream event, as OpenAI.read takes it; the backend's last
-  // response holds no output, so its output is the items streamed
+  // response holds no output, so its output is the items streamed: a web
+  // search's as it was added if its done never comes, completed by its event
   export function read(st: Sub, ev: Event, on: Emit): boolean {
     if (ev.type === "response.output_item.done" && ev.item !== undefined) {
       st.items[ev.output_index ?? st.items.length] = ev.item;
+    }
+    if (ev.type === "response.output_item.added" && ev.item?.type === "web_search_call") {
+      st.items[ev.output_index ?? st.items.length] ??= ev.item;
+    }
+    const searched = ev.type === "response.web_search_call.completed" ? st.items.filter(Boolean).find((item) => item.id === ev.item_id && item.status === "in_progress") : undefined;
+    if (searched !== undefined) {
+      searched.status = "completed";
     }
     const end = OpenAI.read(st, ev, on);
     if (end && st.res !== null && !((st.res.output?.length ?? 0) > 0)) {

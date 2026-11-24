@@ -881,8 +881,8 @@ export namespace Chat {
       Chat.asks(chat, ev);
     }
     if (ev.$ === "Delta") {
-      live_push(run.live, ev.kind, ev.text, ev.fresh);
-      Chat.all(chat, { $: "delta", agent, kind: ev.kind, text: ev.text, fresh: ev.fresh });
+      live_push(run.live, ev.kind, ev.text, ev.fresh, ev.at);
+      Chat.all(chat, { $: "delta", agent, kind: ev.kind, text: ev.text, fresh: ev.fresh, at: ev.at });
       return;
     }
     if (ev.$ === "Start") {
