@@ -240,7 +240,7 @@ export type Choice = { text: string; to: string; move: Move; here: boolean; vend
 
 export const TURN = "the main turn";
 
-export const WIRE = 6;
+export const WIRE = 7;
 
 export const PING  = 10000;
 export const RETRY = 1000;
