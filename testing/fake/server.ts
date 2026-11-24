@@ -15,8 +15,9 @@ type Seen = { n: number; at: string; vendor: string; path: string; model: string
 
 type Used = { input: number; read: number; write: number };
 
-// pace: ms between one block's end and the next's start
-type Sent = { blocks: Array<{ text: string } | { id: string; name: string; json: string } | { think: string }>; stall: number; cut: boolean; pace: number };
+// pace: ms between one block's end and the next's start; minds: the
+// request asked for reasoning text, which a vendor otherwise leaves out
+type Sent = { blocks: Array<{ text: string } | { id: string; name: string; json: string } | { think: string }>; stall: number; cut: boolean; pace: number; minds: boolean };
 
 export const CONTROL = 9999;
 
@@ -179,7 +180,7 @@ function anthropic(vendor: Vendor, model: string, sent: Sent, used: Used): Respo
     if ("think" in b) {
       events.push(["content_block_start", { type: "content_block_start", index, content_block: { type: "thinking", thinking: "", signature: "" } }]);
       events.push(["pause", { ms: 5000 }]);
-      (b.think === "" ? [] : chunks(b.think)).forEach((thinking) => events.push(["content_block_delta", { type: "content_block_delta", index, delta: { type: "thinking_delta", thinking } }]));
+      (!sent.minds ? [""] : b.think === "" ? [] : chunks(b.think)).forEach((thinking) => events.push(["content_block_delta", { type: "content_block_delta", index, delta: { type: "thinking_delta", thinking } }]));
       events.push(["content_block_delta", { type: "content_block_delta", index, delta: { type: "signature_delta", signature: "fake-signature" } }]);
     } else if ("text" in b) {
       events.push(["content_block_start", { type: "content_block_start", index, content_block: { type: "text", text: "" } }]);
@@ -234,15 +235,16 @@ function openai(vendor: Vendor, model: string, sent: Sent, used: Used): Response
   let out = 0;
   sent.blocks.forEach((b, output_index) => {
     if ("think" in b) {
-      const item = { id: hex("rs_"), type: "reasoning", summary: [] };
+      const item = { id: hex("rs_"), type: "reasoning", summary: [], encrypted_content: "gAAAAB" + id("", 64) };
+      const think = sent.minds ? b.think : "";
       ev("response.output_item.added", { output_index, item });
       events.push(["pause", { ms: 5000 }]);
-      if (b.think !== "") {
+      if (think !== "") {
         const part = { type: "summary_text", text: "" };
         ev("response.reasoning_summary_part.added", { item_id: item.id, output_index, summary_index: 0, part });
-        chunks(b.think).forEach((delta) => ev("response.reasoning_summary_text.delta", { item_id: item.id, output_index, summary_index: 0, delta }));
+        chunks(think).forEach((delta) => ev("response.reasoning_summary_text.delta", { item_id: item.id, output_index, summary_index: 0, delta }));
       }
-      const whole = { ...item, summary: b.think === "" ? [] : [{ type: "summary_text", text: b.think }] };
+      const whole = { ...item, summary: think === "" ? [] : [{ type: "summary_text", text: think }] };
       ev("response.output_item.done", { output_index, item: whole });
       done.push(whole);
       return;
@@ -373,7 +375,8 @@ async function model(req: Request, vendor: Vendor, url: URL): Promise<Response> 
   const blocks: Sent["blocks"] = order.what === "tool"
     ? [...think, ...order.calls.map(([n, input]) => ({ id: claude ? id("toolu_01") : id("call_"), name: named(n), json: JSON.stringify(input) }))]
     : [...think, { text: order.what === "reply" ? order.text : "ok" }];
-  const sent: Sent = { blocks, stall: order.what === "stall" ? order.ms : 0, cut: order.what === "cut", pace: order.what === "tool" ? order.pace ?? 0 : 0 };
+  const minds = claude ? get(get(body, "thinking"), "display") === "summarized" : get(get(body, "reasoning"), "summary") !== undefined;
+  const sent: Sent = { blocks, stall: order.what === "stall" ? order.ms : 0, cut: order.what === "cut", pace: order.what === "tool" ? order.pace ?? 0 : 0, minds };
   const used = cache(got.segs, got.marks);
   return claude ? anthropic(vendor, name, sent, used) : openai(vendor, name, sent, used);
 }

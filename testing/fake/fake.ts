@@ -3,7 +3,8 @@ import type { Kind } from "./cases.ts";
 import { CONTROL, type Order } from "./server.ts";
 
 const USE = `fake reply "text"              the next call streams this text
-fake reply --think "t" "text"  the same after 5 s of thinking, then its text "t" ("" for none)
+fake reply --think "t" "text"  the same after 5 s of thinking, then its text "t" ("" for none; none
+                               when the request asks for no reasoning text)
 fake tool NAME 'JSON' [...]    the next call asks for these tools; --pace 2s: each after the one before
                                by that long, as Claude Code passes each on once it is written;
                                --think "t": after 5 s of thinking first, its text "t" ("" for none)

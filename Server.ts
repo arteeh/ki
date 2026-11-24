@@ -528,7 +528,7 @@ export namespace Chat {
         Chat.used(chat, tokens);
       }
     };
-    const ask = { ...Chat.share(chat, Chat.system(chat)), searches: SEARCHES, server, blocks, imgs, talk: mem.talk !== null, no_wait: true, limits, who: chat.who, used };
+    const ask = { ...Chat.share(chat, Chat.system(chat)), searches: SEARCHES, server, blocks, imgs, talk: mem.talk !== null, no_wait: true, limits, who: chat.who, used, minds: config.THINKING };
     chat.model = model;
     chat.asked = true;
     return ask;
@@ -1151,7 +1151,7 @@ export namespace Chat {
     };
     const pick = Chat.sub_pick(chat, sub);
     Chat.sub_picked(chat, sub, pick);
-    return { ...Pick.ask(pick), system: Prompts.prompt("sub"), own, blocks, searches: SEARCHES, server: Tools.at(chat.tools, sub.name), agent: true, who: sub.name, used };
+    return { ...Pick.ask(pick), system: Prompts.prompt("sub"), own, blocks, searches: SEARCHES, server: Tools.at(chat.tools, sub.name), agent: true, who: sub.name, used, minds: config.THINKING };
   }
 
   export function sub_put(chat: Chat, run: Talk, msg: Log, sent: boolean): Msg {

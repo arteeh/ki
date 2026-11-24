@@ -46,7 +46,7 @@ export namespace OpenAI {
       stream               : true,
       store                : false,
       tools                : defs,
-      reasoning            : { effort: ask.effort === "" ? undefined : ask.effort, summary: "auto", context: "all_turns" },
+      reasoning            : { effort: ask.effort === "" ? undefined : ask.effort, summary: ask.minds === true ? "auto" : undefined, context: "all_turns" },
       max_output_tokens    : max,
       max_tool_calls       : ask.searches || undefined,
       service_tier         : tier,

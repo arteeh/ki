@@ -44,6 +44,9 @@ export type Ask = Pick & {
   steer?    : Steer;
   limits?   : number;
   who?      : string;
+  // ask for the model's reasoning text, to show it (Show thinking as the
+  // run starts); else the model reasons all the same, its text left out
+  minds?    : boolean;
 };
 
 type Prefix = { warm_until: number; writing: Promise<void> | null };

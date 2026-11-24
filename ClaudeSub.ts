@@ -41,6 +41,7 @@ const ENV = {
   CLAUDE_CODE_NO_MODEL_FALLBACK            : "1",
   CLAUDE_CODE_DISABLE_REFUSAL_FALLBACK     : "1",
   CLAUDE_CODE_MAX_OUTPUT_TOKENS            : "128000",
+  CLAUDE_CODE_THINKING_DISPLAY_UPDATES     : "0", // omitted thinking asks for no progress updates in its place
   MCP_TIMEOUT                              : "60000", // connecting to ki's tools, whose list takes up to 5 s
   CLAUDE_AGENT_SDK_CLIENT_APP              : "ki",
 };
@@ -242,7 +243,7 @@ export namespace ClaudeSub {
       cwd                    : DIR,
       model                  : ask.model,
       effort                 : ask.effort === "" ? undefined : ask.effort as Options["effort"],
-      thinking               : { type: "adaptive", display: "summarized" },
+      thinking               : { type: "adaptive", display: ask.minds === true ? "summarized" : "omitted" },
       systemPrompt           : [ask.system, boundary, ...(ask.own === undefined || ask.own === "" ? [] : [ask.own])],
       tools,
       allowedTools           : [...tools, "mcp__" + MCP],
