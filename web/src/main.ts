@@ -394,6 +394,14 @@ function chat(): void {
   };
   // a press on the / list keeps the composer's focus, its click picks
   $("#slash").onpointerdown = (ev) => ev.preventDefault();
+  // a phone's keyboard stays up for a tap in the chat but on a field
+  // (#221): the tap that lands takes no focus, its click still acts
+  document.addEventListener("mousedown", (ev) => {
+    const target = ev.target instanceof Element ? ev.target : null;
+    if (!DESK.matches && Box.box_focused() && target !== null && target.closest("header, #log, footer") !== null && target.closest("input, textarea, select, [contenteditable]") === null) {
+      ev.preventDefault();
+    }
+  });
   $("#slash").onclick = (ev) => {
     const name = ev.target instanceof Element ? ev.target.closest<HTMLElement>("[data-name]")?.dataset.name : undefined;
     if (name !== undefined) {
@@ -407,6 +415,15 @@ function chat(): void {
   $(".attach").onclick = () => file.click();
   $("#pick").onkeydown = roam;
   $("#pick").addEventListener("focusout", left);
+  // nor does a menu of it take the focus then
+  $("#pick").addEventListener("beforetoggle", (ev) => {
+    const menu = ev.target as HTMLElement;
+    const here = menu.querySelector("[autofocus]");
+    if (here !== null && ev.newState === "open" && !DESK.matches && Box.box_focused()) {
+      here.removeAttribute("autofocus");
+      menu.addEventListener("toggle", () => here.setAttribute("autofocus", ""), { once: true });
+    }
+  }, true);
   $("header .who").onclick = () => go("/a/" + v.agent + "/edit");
   $("header .brain").onclick = () => go("/tree?a=" + v.agent);
   $("header .back").onclick = () => go(up_to());
@@ -1754,6 +1771,7 @@ function route(): void {
   const chat = !page && !tree && !list;
   const sub = SUB.exec(p);
   const left = !$("#log").hidden && v.page === null;
+  const was = $("#log").hidden ? null : shown_key();
   // the chat left, as it was: read before chat_to() sets the next chat to
   // open at its end, and before the list hides this one, whose page is
   // then too short to keep its place
@@ -1784,6 +1802,10 @@ function route(): void {
     a.href = to;
   });
   $("#log").hidden = !chat;
+  // leaving the chat puts a phone's keyboard down (#221)
+  if (!DESK.matches && was !== (chat ? shown_key() : null)) {
+    BOX.blur();
+  }
   document.body.classList.toggle("account", page);
   document.body.classList.toggle("tree", tree);
   $("#account").hidden = !page;
