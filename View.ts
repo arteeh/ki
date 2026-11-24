@@ -583,7 +583,7 @@ export function view_copy(v: View, from: number): Server[] {
   }
   const { busy, wait, sums, again, importing, limit, queue, sent, pick, vendors, models, profiles, timers, mcp, talk, bg, thinking, skills } = v;
   const state = { busy, wait, sums, again, importing, limit, queue, sent, pick, vendors, models, profiles, timers, mcp, talk, bg, thinking, skills };
-  return [{ $: "state", agent: v.agent, ...state }, { $: "know", nodes, whole }, { $: "view", parts, turn: v.turn }, { $: "live", live: v.live }];
+  return [{ $: "state", agent: v.agent, ...state }, { $: "know", nodes, whole }, { $: "view", parts, turn: v.turn }, { $: "live", live: copy_live(v.live, thinking !== false) }];
 }
 
 // a copy of the open subagent page, as the messages a link sends for it,
@@ -592,7 +592,11 @@ export function view_page_copy(page: Page, from: number, minds: boolean): Server
   const log = page.log ?? [];
   const k = Math.max(0, log.findIndex((e) => (e.id ?? Infinity) >= from));
   const entries = minds ? log.slice(k) : log.slice(k).filter((e) => e.kind !== "mind").map(unminded);
-  return [{ $: "agent", name: page.name, found: true, from: page.from + k, entries, done: page.done, how: page.how }, { $: "live", agent: page.name, live: page.live }];
+  return [{ $: "agent", name: page.name, found: true, from: page.from + k, entries, done: page.done, how: page.how }, { $: "live", agent: page.name, live: copy_live(page.live, minds) }];
+}
+
+function copy_live(live: Live[], minds: boolean): Live[] {
+  return minds ? live : live.map((piece) => piece.kind === "mind" ? { ...piece, text: "" } : piece);
 }
 
 // an entry without the reasoning a copy needn't hold while it is hidden
