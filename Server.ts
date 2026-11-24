@@ -1131,12 +1131,16 @@ export namespace Chat {
     return Sub.pick(chat.pick, sub.role, sub.name);
   }
 
-  export function sub_shown(chat: Chat, sub: Sub<Msg>): Pick | null {
+  export function sub_asks(chat: Chat, sub: Sub<Msg>): Pick | null {
     try {
-      return sub.pick ?? Chat.sub_pick(chat, sub);
+      return Chat.sub_pick(chat, sub);
     } catch {
       return null;
     }
+  }
+
+  export function sub_shown(chat: Chat, sub: Sub<Msg>): Pick | null {
+    return sub.pick ?? Chat.sub_asks(chat, sub);
   }
 
   // a finished page uses its own last pick, never the spawner's current one
@@ -1155,12 +1159,14 @@ export namespace Chat {
   }
 
   // how full its context is (#156): its last request and its log since,
-  // before that a guess from its prompt, view and log
-  export function sub_meter(sub: Sub<Msg>, pick: Pick | null): Meter | null {
+  // before that a guess from its prompt, view and log; of the most input
+  // of the pick it asks on, as the main chat's of a profile's first model,
+  // though a fallback answers (#213)
+  export function sub_meter(sub: Sub<Msg>, pick: Pick | null, asks: Pick | null): Meter | null {
     if (pick === null) {
       return null;
     }
-    const input = Pick.input(pick);
+    const input = Pick.input(asks ?? pick);
     const start = Memory.bytes(Prompts.prompt("sub")) + sub.view.reduce((n, b) => n + Memory.bytes(b.text), 0);
     const tokens = sub.used === null ? Math.ceil((start + sub.bytes) / TOKEN) : sub.used + Math.ceil((sub.bytes - sub.used_at) / TOKEN);
     return { from: 0, used: Math.min(1, tokens / input), tokens, input, model: pick.model, guess: sub.used === null };
@@ -1168,7 +1174,7 @@ export namespace Chat {
 
   export function sub_row(chat: Chat, sub: Sub<Msg>): SubRow {
     const pick = Chat.sub_shown(chat, sub);
-    return Sub.row(sub, pick, Chat.sub_meter(sub, pick), sub.run.sent.flatMap(({ m }) => Array.from({ length: m.end - m.id }, (_, k) => m.id + k)));
+    return Sub.row(sub, pick, Chat.sub_meter(sub, pick, Chat.sub_asks(chat, sub)), sub.run.sent.flatMap(({ m }) => Array.from({ length: m.end - m.id }, (_, k) => m.id + k)));
   }
 
   export function sub_bytes(root: Root): number {
