@@ -714,7 +714,7 @@ export namespace Chat {
     const call = kind === "echo" && pair.of !== undefined ? run.calls.get(pair.of) : undefined;
     if (call !== undefined && !call.logged && !Chat.mid_message(chat, run)) {
       call.logged = true;
-      const msg = Chat.log(chat, run, { kind: "tool", text: call.text + "\n" + text, of: pair.of, tool: pair.tool, result: call.text.length, line: Chat.line_of(call.text) }, sent);
+      const msg = Chat.log(chat, run, { kind: "tool", text: call.text + "\n" + text, of: pair.of, tool: pair.tool, result: call.text.length, line: Chat.line_of(call.text), mind: call.mind }, sent);
       Chat.later(chat, run);
       return msg;
     }
@@ -724,6 +724,14 @@ export namespace Chat {
 
   export function log(chat: Chat, run: Talk, msg: Log, sent: boolean): Msg {
     return run === chat.main ? Chat.put(chat, msg, sent) : Chat.sub_put(chat, run, msg, sent);
+  }
+
+  // the reasoning since the run's last reply or tool call, for the one that
+  // comes now to keep (#204)
+  export function mind_take(run: Talk): { mind?: string } {
+    const mind = run.mind.join("\n\n");
+    run.mind = [];
+    return mind === "" ? {} : { mind };
   }
 
   // a zoom's line is the call as the chat shows it: its result is what
@@ -752,10 +760,10 @@ export namespace Chat {
       Team.unread(chat.id, null);
       chat.told = true;
     }
-    const { i, kind, date, of, tool, from, result } = roots[0];
+    const { i, kind, date, of, tool, from, result, mind } = roots[0];
     const pages = roots.length > 1 ? { pages: roots.length } : {};
     const said = Memory.call_of({ text: roots.map((r) => r.text).join(""), result });
-    Chat.all(chat, { $: "entry", id: i, kind, ...said, date, images: roots.flatMap((r) => r.images ?? []), of, tool, from, ...pages, ...queued });
+    Chat.all(chat, { $: "entry", id: i, kind, ...said, date, images: roots.flatMap((r) => r.images ?? []), of, tool, from, mind, ...pages, ...queued });
     if (first && Chat.real(roots[0])) {
       chat.gist = roots[0].i;
     }
@@ -781,7 +789,7 @@ export namespace Chat {
     }
     for (const [of, call] of left) {
       call.logged = true;
-      Chat.log(chat, run, { kind: "tool", text: call.text, of, tool: call.tool }, false);
+      Chat.log(chat, run, { kind: "tool", text: call.text, of, tool: call.tool, mind: call.mind }, false);
     }
     Chat.live(chat, run, Chat.waiting(run));
     Chat.later(chat, run);
@@ -850,6 +858,7 @@ export namespace Chat {
     const agent = run === chat.main ? undefined : run.name;
     if (ev.$ === "Ended") {
       run.limit = null;
+      run.mind = [];
       Chat.unanswered(chat, run);
       Chat.live(chat, run, []);
       return;
@@ -884,11 +893,15 @@ export namespace Chat {
       return;
     }
     if (ev.kind === "tool" && ev.of !== undefined) {
-      run.calls.set(ev.of, { text: ev.text, tool: ev.text.split(" ", 1)[0], logged: false, started: ev.queued !== true, answered: false, n: SEQ.n++ });
+      run.calls.set(ev.of, { text: ev.text, tool: ev.text.split(" ", 1)[0], logged: false, started: ev.queued !== true, answered: false, n: SEQ.n++, ...Chat.mind_take(run) });
     } else if (ev.kind === "mind") {
+      if (ev.text.trim() !== "") {
+        run.mind.push(ev.text);
+      }
       Chat.all(chat, { $: "entry", agent, kind: ev.kind, text: ev.text });
     } else if (ev.kind !== "user") {
       const { kind, text, of } = ev;
+      const mind = kind === "reply" ? Chat.mind_take(run) : {};
       const call = of === undefined ? undefined : run.calls.get(of);
       if (call !== undefined) {
         call.started = true;
@@ -898,7 +911,7 @@ export namespace Chat {
         if (kind === "echo" && run.calls.get(of ?? "")?.logged === false) {
           Chat.push(chat, run, kind, text, [], false, undefined, pair);
         } else {
-          Chat.behind(chat, run, () => Chat.log(chat, run, { kind, text, ...pair }, false), { kind, text });
+          Chat.behind(chat, run, () => Chat.log(chat, run, { kind, text, ...pair, ...mind }, false), { kind, text });
         }
         if (of !== undefined && run.calls.delete(of)) {
           Chat.live(chat, run, Chat.waiting(run));
@@ -1142,13 +1155,13 @@ export namespace Chat {
   }
 
   export function sub_put(chat: Chat, run: Talk, msg: Log, sent: boolean): Msg {
-    const { kind, text, of, tool, result } = msg;
-    const root = Memory.agent_push(chat.mem, run.name, kind, text, { of, tool, result });
+    const { kind, text, of, tool, result, mind } = msg;
+    const root = Memory.agent_push(chat.mem, run.name, kind, text, { of, tool, result, mind });
     const sub = chat.subs.get(run.name);
     if (sub !== undefined) {
       sub.bytes += Chat.sub_bytes(root);
     }
-    Chat.all(chat, { $: "entry", agent: run.name, id: root.i, kind, ...Memory.call_of(root), date: root.date, of, tool, ...(sent ? { sent } : {}) });
+    Chat.all(chat, { $: "entry", agent: run.name, id: root.i, kind, ...Memory.call_of(root), date: root.date, of, tool, mind, ...(sent ? { sent } : {}) });
     return { id: root.i, end: root.i + 1 };
   }
 
@@ -1781,7 +1794,7 @@ export namespace Chat {
         const asked = typeof msg.before === "number" ? msg.before : undefined;
         const before = asked ?? log?.length ?? 0;
         const from = Math.max(0, before - SHOWN);
-        const entries = (log ?? []).slice(from, before).map((root) => ({ id: root.i, kind: root.kind, ...Memory.call_of(root), date: root.date, of: root.of, tool: root.tool }));
+        const entries = (log ?? []).slice(from, before).map((root) => ({ id: root.i, kind: root.kind, ...Memory.call_of(root), date: root.date, of: root.of, tool: root.tool, mind: root.mind }));
         Chat.send(sock, { $: "agent", name, found: log !== null, from, before: asked, entries, done: !chat.subs.has(name), how: Chat.sub_how(chat, name, log) });
         if (asked === undefined) {
           Chat.send(sock, { $: "live", agent: name, live: chat.subs.get(name)?.run.live ?? [] });
@@ -2010,7 +2023,7 @@ export namespace Chat {
         const m = pages[0];
         const said = Memory.call_of({ text: pages.map((p) => p.text).join(""), result: m.result });
         const images = pages.flatMap((p) => p.images ?? []);
-        Chat.send(sock, { $: "know", whole: { [a]: { kind: m.kind, ...said, date: m.date, images, of: m.of, tool: m.tool, from: m.from, ...(b - a > 1 ? { pages: b - a } : {}) } } });
+        Chat.send(sock, { $: "know", whole: { [a]: { kind: m.kind, ...said, date: m.date, images, of: m.of, tool: m.tool, from: m.from, mind: m.mind, ...(b - a > 1 ? { pages: b - a } : {}) } } });
       }
       Chat.know(chat, sock, id, n);
     }

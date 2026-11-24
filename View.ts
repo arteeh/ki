@@ -11,8 +11,9 @@ import { rec } from "./Json.ts";
 export type Part = [number, number];
 
 // pages: a message split in memory comes whole, under its first page's id
-// (#151); echo: a tool call's result, logged in the call's message (#188)
-type Entry = { kind: Kind; text: string; echo?: string; date?: string; images?: string[]; of?: string; tool?: string; from?: string; pages?: number };
+// (#151); echo: a tool call's result, logged in the call's message (#188);
+// mind: the reasoning that came before it (#204)
+type Entry = { kind: Kind; text: string; echo?: string; date?: string; images?: string[]; of?: string; tool?: string; from?: string; pages?: number; mind?: string };
 
 export type Queued = { kind: Kind; text: string };
 
@@ -483,6 +484,10 @@ function view_heard(v: View, msg: Server): Client[] {
       if (msg.agent !== undefined) {
         const { $, agent, id, sent, ...entry } = msg;
         const log = v.pages.get(agent)?.log;
+        // the reasoning it keeps came live before it (#204)
+        while (entry.mind !== undefined && log?.at(-1)?.kind === "mind" && log.at(-1)?.id === undefined) {
+          log.pop();
+        }
         log?.push(id === undefined ? entry : { ...entry, id });
         return [];
       }
@@ -741,7 +746,7 @@ export function view_sub(v: View): SubRow | undefined {
 function page_rows(page: Page, minds: boolean, sub: SubRow | undefined): Row[] {
   const log = (page.log ?? []).filter((e) => minds || e.kind !== "mind");
   const earlier: Row[] = page.from > 0 ? [{ $: "Cap", text: page.loading ? "Loading…" : "", earlier: true }] : [];
-  const rows = log.flatMap((e, k) => (e.id === 0 && e.kind === "note" ? [] : sent_rows(e.id !== undefined && sub?.sent.includes(e.id) === true, whole_rows(e.id ?? null, e, log[k - 1]))));
+  const rows = log.flatMap((e, k) => (e.id === 0 && e.kind === "note" ? [] : [...(minds ? mind_rows(e) : []), ...sent_rows(e.id !== undefined && sub?.sent.includes(e.id) === true, whole_rows(e.id ?? null, e, log[k - 1]))]));
   return [...earlier, ...view_lines(rows), ...(page.done && page.log !== null ? [Cap("Done: its report is in the chat that spawned it.")] : [])];
 }
 
@@ -772,7 +777,7 @@ function view_lines(rows: Row[]): Row[] {
 
 function view_rows(v: View, parts: Part[]): Row[][] {
   const drawn = new Set<number>();
-  return parts.map(([id, n]) => part_rows(v, id, n, v.turn, drawn));
+  return parts.map(([id, n]) => part_rows(v, id, n, drawn));
 }
 
 // a busy agent looks busy (#129): waiting for its model, writing, thinking,
@@ -956,6 +961,10 @@ function view_entry(v: View, msg: Server & { $: "entry" }): void {
   }
   const last = v.parts.at(-1);
   if (id !== undefined) {
+    // the reasoning it keeps came live before it (#204)
+    if (entry.mind !== undefined && last !== undefined) {
+      v.minds.delete(last[0] + last[1] - 1);
+    }
     view_whole(v, id, entry);
     for (let k = 0; k < (entry.pages ?? 1); k++) {
       v.parts.push([id + k, 1]);
@@ -1152,7 +1161,7 @@ export async function post(url: string, body: object, auth: Record<string, strin
 // which shows its two halves
 // a message split in memory shows whole, once, at the first of its pages
 // shown whole (drawn: those shown so far); a fold counts messages (#151)
-function part_rows(v: View, id: number, n: number, t: number, drawn: Set<number>): Row[] {
+function part_rows(v: View, id: number, n: number, drawn: Set<number>): Row[] {
   const key   = id + "+" + n;
   const at    = n === 1 ? v.firsts.get(id) ?? id : id;
   const entry = v.whole.get(at);
@@ -1161,27 +1170,37 @@ function part_rows(v: View, id: number, n: number, t: number, drawn: Set<number>
     return sum_rows(id, 1, 1, v.nodes.get(key));
   }
   if (n === 1 && entry !== undefined) {
-    const minds = id < t || v.thinking === false ? [] : v.minds.get(id) ?? [];
-    const after = minds.flatMap((x) => entry_rows(null, "mind", x));
+    const shown = v.thinking !== false;
+    const after = shown ? (v.minds.get(id) ?? []).flatMap((x) => entry_rows(null, "mind", x)) : [];
     if (drawn.has(at)) {
       return after;
     }
     drawn.add(at);
     const before = v.firsts.get(at - 1) ?? at - 1;
-    return [...sent_rows(v.sent.includes(at), whole_rows(at, entry, v.whole.get(before))), ...after];
+    return [...(shown ? mind_rows(entry) : []), ...sent_rows(v.sent.includes(at), whole_rows(at, entry, v.whole.get(before))), ...after];
   }
   if (n === 1 || v.open.get(key) !== true) {
     const msgs = n - [...v.firsts.keys()].filter((k) => k >= id && k < id + n).length + (drawn.has(v.firsts.get(id) ?? id) ? 0 : v.firsts.has(id) ? 1 : 0);
     return msgs === 0 ? [] : sum_rows(id, n, msgs, v.nodes.get(key));
   }
   const had = drawn.size;
-  const rows = [...part_rows(v, id, half, t, drawn), ...part_rows(v, id + half, half, t, drawn)];
+  const rows = [...part_rows(v, id, half, drawn), ...part_rows(v, id + half, half, drawn)];
   const msgs = drawn.size - had + folded(rows);
   return msgs === 0 ? rows : [{ $: "Box", id, n, msgs, text: GLYPH.open + " " + msgs + "x · fold", rows }];
 }
 
 const ROWS  = new WeakMap<Entry | Node, Row[]>();
 const APART = new WeakMap<Entry, Row[]>();
+const MINDS = new WeakMap<Entry, Row[]>();
+
+// the reasoning a message keeps, before it (#204), made once
+function mind_rows(entry: Entry): Row[] {
+  const rows = entry.mind === undefined ? [] : MINDS.get(entry) ?? entry_rows(null, "mind", entry.mind);
+  if (entry.mind !== undefined) {
+    MINDS.set(entry, rows);
+  }
+  return rows;
+}
 
 function whole_rows(id: number | null, entry: Entry, before: Entry | undefined): Row[] {
   const of = entry_of(entry, before);

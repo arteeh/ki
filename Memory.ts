@@ -15,8 +15,10 @@ import { move_over, write_whole } from "./Write.ts";
 export type Root = Msg & { i: number; size: number; date: string };
 
 // from: the agent whose message it is, by id; copy: a team line's
-// message there (a copy made before 41)
-export type Msg = { kind: Kind; text: string; date?: string; images?: string[]; imported?: boolean; line?: string; more?: boolean; page?: boolean; act?: string; from?: string; copy?: number } & Pair;
+// message there (a copy made before 41); mind: the reasoning that came
+// before a reply or tool call, for the chat page only: nothing shows it the
+// model, nor counts it in a size (#204)
+export type Msg = { kind: Kind; text: string; date?: string; images?: string[]; imported?: boolean; line?: string; more?: boolean; page?: boolean; act?: string; from?: string; copy?: number; mind?: string } & Pair;
 
 // result: a tool call's message holds its result too, after the newline
 // at result in its whole text (#188)
@@ -421,7 +423,7 @@ export namespace Memory {
       const more = k < n - 1 || msg.more === true ? true : undefined;
       const act = k === n - 1 ? msg.act : undefined;
       const page = k > 0 || msg.page === true ? true : undefined;
-      return { ...msg, date, text: texts[k - n + texts.length] ?? "", images, line: k === 0 ? msg.line : undefined, result: k === 0 ? msg.result : undefined, more, page, act };
+      return { ...msg, date, text: texts[k - n + texts.length] ?? "", images, line: k === 0 ? msg.line : undefined, result: k === 0 ? msg.result : undefined, mind: k === 0 ? msg.mind : undefined, more, page, act };
     });
   }
 
@@ -1298,7 +1300,7 @@ export namespace Memory {
     return name;
   }
 
-  export function agent_push(mem: Memory, name: string, kind: Kind, text: string, pair: Pair = {}): Root {
+  export function agent_push(mem: Memory, name: string, kind: Kind, text: string, pair: Pair & { mind?: string } = {}): Root {
     const n = AGENT_LOGS.get(mem.dir + name) ?? Memory.agent(mem, name)?.length ?? 0;
     const root = Memory.root(n, { kind, text, ...pair });
     Memory.append(mem.dir + AGENTS + name + ".jsonl", [JSON.stringify(root)]);

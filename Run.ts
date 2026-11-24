@@ -4,8 +4,8 @@ import type { Live } from "./View.ts";
 import { err_stack, err_why } from "./Err.ts";
 
 // answered: its result came (#193); n: its place among the calls and what
-// waits for them (Later)
-type Waiting = { text: string; tool: string; logged: boolean; started: boolean; answered: boolean; n: number };
+// waits for them (Later); mind: the reasoning before it (#204)
+type Waiting = { text: string; tool: string; logged: boolean; started: boolean; answered: boolean; n: number; mind?: string };
 
 // a message that waits for the calls before it (their ids) to be logged
 // with their results (#188); live: what the chat shows of it meanwhile
@@ -30,8 +30,11 @@ type Inbox<Q, M> = {
   sent  : Sent<Q, M>[];
 };
 
+// mind: its reasoning since its last reply or tool call, which the next one
+// keeps, for the chat to show, never the model (#204)
 type Calling = {
   call  : Call | null;
+  mind  : string[];
   live  : Live[];
   calls : Map<string, Waiting>;
   later : Later[];
@@ -68,7 +71,7 @@ type Kind<Q, M> = LoopHooks<Q, M> & InboxHooks<Q, M> & CallHooks<Q, M> & { chang
 export namespace Run {
 
   export function make<Q, M>(name: string, kind: Kind<Q, M>): Run<Q, M> {
-    return { name, kind, busy: false, going: Promise.resolve(), call: null, queue: [], wait: [], sent: [], halt: new AbortController(), live: [], calls: new Map(), later: [], limit: null, fell: null };
+    return { name, kind, busy: false, going: Promise.resolve(), call: null, mind: [], queue: [], wait: [], sent: [], halt: new AbortController(), live: [], calls: new Map(), later: [], limit: null, fell: null };
   }
 
   export function take<Q, M>(run: Run<Q, M>, q: Q): Promise<string | null> {

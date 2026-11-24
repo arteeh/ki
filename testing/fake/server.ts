@@ -242,7 +242,9 @@ function openai(vendor: Vendor, model: string, sent: Sent, used: Used): Response
         ev("response.reasoning_summary_part.added", { item_id: item.id, output_index, summary_index: 0, part });
         chunks(b.think).forEach((delta) => ev("response.reasoning_summary_text.delta", { item_id: item.id, output_index, summary_index: 0, delta }));
       }
-      ev("response.output_item.done", { output_index, item: { ...item, summary: b.think === "" ? [] : [{ type: "summary_text", text: b.think }] } });
+      const whole = { ...item, summary: b.think === "" ? [] : [{ type: "summary_text", text: b.think }] };
+      ev("response.output_item.done", { output_index, item: whole });
+      done.push(whole);
       return;
     }
     if ("text" in b) {
