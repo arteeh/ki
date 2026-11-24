@@ -358,6 +358,14 @@ export namespace Anthropic {
     return JSON.stringify(c);
   }
 
+  // when the usage limit an API key's owner set lets it in again: "You
+  // will regain access on 2026-12-01 at 00:00 UTC."
+  export function regained(text: string): number | null {
+    const m = /regain access on (\d{4}-\d{2}-\d{2})(?: at (\d{2}:\d{2}))? UTC/.exec(text);
+    const at = m === null ? NaN : Date.parse(m[1] + "T" + (m[2] ?? "00:00") + ":00Z");
+    return at > Date.now() ? at : null;
+  }
+
   export const wire: Wire<State, Event> = {
     key     : "anthropic",
     idle    : 300e3,
@@ -368,6 +376,7 @@ export namespace Anthropic {
     read    : Anthropic.read,
     begun   : (ev) => ev.type === "message_start",
     step    : Anthropic.step,
+    reset   : (_res, text) => Anthropic.regained(text),
   };
 
 }

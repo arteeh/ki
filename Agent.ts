@@ -90,6 +90,7 @@ export const TRIES = 8;
 // (the credit or quota gone, Anthropic's a 400, OpenAI's a 429)
 const OFF   = [401, 402, 403, 404];
 const SPENT = /insufficient_quota|billing_hard_limit_reached|credit balance is too low/i;
+const CAPPED = /reached your specified API usage limits/;
 
 export const BUSY  = "the AI service is busy or unavailable right now";
 
@@ -431,9 +432,10 @@ export namespace Agent {
   }
 
   // a refusal a usage limit's reset ends: a 429, but OpenAI's
-  // insufficient_quota (credit gone)
+  // insufficient_quota (credit gone); Anthropic's 400 for the usage limit
+  // an API key's owner set (#201)
   export function limited(res: Response, body: string): boolean {
-    return res.status === 429 && !body.includes("insufficient_quota");
+    return (res.status === 429 && !body.includes("insufficient_quota")) || (res.status === 400 && CAPPED.test(body));
   }
 
   export function passing(res: Response): boolean {
