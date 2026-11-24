@@ -201,6 +201,9 @@ function row_make(row: View.Row): string {
       if (row.wait === true) {
         return `<p class="cap wait" role="status" aria-label="Working"><i></i><i></i><i></i></p>`;
       }
+      if (row.notice === true) {
+        return `<p class="cap notice" role="status">${esc(row.text)}</p>`;
+      }
       return `<p class="cap${row.think === true ? " think" : ""}${row.earlier === true ? " earlier" : ""}">${esc(row.text)}</p>`;
     }
     case "Line": {

@@ -227,7 +227,7 @@ export type Row =
   | { $: "Msg"; id: number | null; kind: Kind; who: string; text: string; body: Md.Block[]; call: Call.Call | null; images: string[]; queued?: boolean; from?: string; of?: string; writing?: true; cmd?: string }
   | { $: "Line"; id: number | null; call: Call.Call; echo: string | null; rows: Row[]; phase?: Phase }
   | { $: "Group"; id: number | null; lines: Line[]; phase?: Phase }
-  | { $: "Cap"; text: string; think?: true; earlier?: true; wait?: true }
+  | { $: "Cap"; text: string; think?: true; earlier?: true; wait?: true; notice?: true }
 
 // a tool call while it's written, then while it runs (#129)
 type Phase = "typing" | "running";
@@ -933,7 +933,7 @@ export function view_tail(v: View): Row[] {
   const queued = v.queue.flatMap((q) => waits(q.kind, q.text, true));
   const after = [...queued, ...kept, ...load];
   if (v.limit !== null) {
-    return [...rows, Cap(limit_show(v.limit)), ...after];
+    return [...rows, { $: "Cap", text: "Ki · " + limit_show(v.limit), notice: true }, ...after];
   }
   if (v.wait === SUMMARIES) {
     return [...rows, ...(rows.length > 0 ? [] : [Cap(sums_show(v.sums, v.again))]), ...after];

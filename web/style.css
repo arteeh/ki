@@ -381,6 +381,7 @@ header .imping { display: flex; flex-direction: column; justify-content: center;
 #log { width: min(var(--col), 100% - 40px); margin: 0 auto; padding: calc(24px + var(--whole, 0px)) 0 calc(var(--foot, 0px) - 13px); flex: 1 0 auto; }
 #log > * > * { margin-block: 14px; }
 .cap { font: italic 14.5px var(--serif); color: var(--mid); }
+.cap.notice { padding: 8px 12px; border-inline-start: 2px solid var(--edge); font: 13px/1.5 var(--sans); overflow-wrap: anywhere; }
 
 .block.one { display: flex; padding: 10px 14px; background: var(--block); border-radius: 10px; font: 15px/1.55 var(--serif); color: var(--mid); overflow-wrap: anywhere; }
 .block.one > div { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

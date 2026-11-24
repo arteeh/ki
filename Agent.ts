@@ -52,6 +52,7 @@ export type Step = {
   until?     : number;
   limits?    : number;
   usage?     : boolean;
+  quota?     : boolean;
   open?      : boolean;
   container? : string;
 };
@@ -153,6 +154,7 @@ export namespace Agent {
         end.long = step.stop !== "lost" && TOO_LONG.test(step.why);
         end.stop = step.stop;
         end.off = step.off;
+        end.quota = step.quota;
         end.until = step.refusal?.until;
         end.limits = step.limits;
         return;
@@ -170,7 +172,7 @@ export namespace Agent {
         end.acted = true;
         on({ $: "Start", of: use.id });
         const out = await Agent.use(run, tools, use);
-        on({ $: "Entry", kind: "echo", text: (out.fail ? "error: " : "") + out.text, of: use.id });
+        on({ $: "Entry", kind: "echo", text: (out.fail ? "error: " : "") + out.text, of: use.id, imgs: out.imgs });
         backs.push({ id: use.id, out });
       }
       if (signal.aborted) {
@@ -411,7 +413,7 @@ export namespace Agent {
       const stop = refusal !== null ? "down" : text !== null && Agent.limited(res, text) && !spent ? "limit" : text !== null && Agent.passing(res) && !spent ? "busy" : "down";
       const until = text !== null && stop === "limit" ? wire.reset?.(res, text) ?? undefined : undefined;
       const usage = stop === "limit" && (res.status === 400 || (text !== null && Agent.usage_cap(text)));
-      step = text !== null || res.body === null ? { ...Agent.fail(why, [], stop), off, refusal: refusal ?? undefined, until, usage } : await Agent.stream(wire, run, res.body, timer, seen, st, flight.begun);
+      step = text !== null || res.body === null ? { ...Agent.fail(why, [], stop), off, refusal: refusal ?? undefined, until, usage, quota: spent } : await Agent.stream(wire, run, res.body, timer, seen, st, flight.begun);
     } catch (err) {
       step = Agent.fail(err_why(err), [], "busy");
     }

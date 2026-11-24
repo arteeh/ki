@@ -42,7 +42,7 @@ export namespace Limit {
 
   export async function hit(l: Limit, told: number | null, acted: boolean, why: string, usage = false): Promise<Off | null> {
     const { ms, known } = Limit.wait_for(told, l.n, l.ask.patient ? AGAIN : LIMIT);
-    if ((usage && l.ask.fresh === true && !acted) || Limit.ends(l.ask, acted, ms)) {
+    if ((usage && (l.ask.fallback === true || (l.ask.fresh === true && !acted))) || Limit.ends(l.ask, acted, ms)) {
       return Limit.off(why, told, l.ask, l.n);
     }
     await Limit.park(l, ms, known, Limit.reason(why), usage && l.ask.agent === true);
@@ -52,7 +52,7 @@ export namespace Limit {
   export async function guard(l: Limit, key: string, acted: boolean): Promise<Off | null> {
     for (let until = Limit.under([key]); until !== null && !l.signal.aborted; until = Limit.under([key])) {
       const ms = until - Date.now();
-      if (Limit.ends(l.ask, acted, ms)) {
+      if (l.ask.fallback === true || Limit.ends(l.ask, acted, ms)) {
         return Limit.off("usage limit", until, l.ask, l.n);
       }
       await Limit.park(l, ms, true, undefined);
@@ -68,7 +68,7 @@ export namespace Limit {
   }
 
   export function ends(ask: { fallback?: boolean; repick?: unknown; no_wait?: boolean; fresh?: boolean }, acted: boolean, ms: number): boolean {
-    return ms >= LONG && (ask.no_wait === true || ((ask.fallback === true || ask.repick !== undefined || ask.fresh === true) && !acted));
+    return ms >= LONG && (ask.no_wait === true || ask.fallback === true || ((ask.repick !== undefined || ask.fresh === true) && !acted));
   }
 
   // the reason a limit came with, for its note (#201): one line, no HTTP

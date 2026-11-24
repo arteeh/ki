@@ -965,6 +965,10 @@ export namespace Chat {
   }
 
   export function ran(chat: Chat, run: Talk, ev: Extract<Event, { $: "Run" }>): void {
+    if (ev.from !== null) {
+      run.mind = [];
+      Chat.unanswered(chat, run);
+    }
     const now = ev.from === null ? null : Pick.label(ev.run);
     if (run === chat.main) {
       chat.model = ev.run.model;
@@ -973,7 +977,7 @@ export namespace Chat {
       return;
     }
     run.fell = now;
-    const text = ev.from === null ? "Back on " + Pick.label(ev.run) + "." : Pick.label(ev.from) + " failed: " + ev.why.replace(/\.$/, "") + ". Going on with " + now + ".";
+    const text = ev.from === null ? "Back on " + Pick.label(ev.run) + "." : ev.limited ? ev.from.model + " hit its usage limit. Continuing with " + ev.run.model + "." : Pick.label(ev.from) + " failed: " + ev.why.replace(/\.$/, "") + ". Going on with " + now + ".";
     Chat.hold(chat, () => Chat.noted(chat, run, text));
   }
 

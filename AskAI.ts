@@ -69,11 +69,13 @@ export type Again = { why: string; until: number; limit: boolean };
 
 export type Event =
   | { $: "Delta"; kind: Kind; text: string; fresh?: boolean; at?: At }
-  | { $: "Entry"; kind: Kind; text: string; of?: string; queued?: boolean }
+  | { $: "Entry"; kind: Kind; text: string; of?: string; queued?: boolean; imgs?: Img[] }
   | { $: "Start"; of: string }
   | { $: "Limit"; limit: Parked | null }
   | { $: "Again"; again: Again | null }
-  | { $: "Run"; run: Pick; from: Pick | null; why: string };
+  | { $: "Run"; run: Pick; from: Pick | null; why: string; limited: boolean };
+
+type Progress = Extract<Event, { $: "Entry" }> | Say;
 
 export type End = {
   ok     : boolean;
@@ -83,6 +85,7 @@ export type End = {
   stop?  : "fail" | "lost" | "down";
   off?   : boolean;
   acted? : boolean;
+  quota? : boolean;
   until? : number;
   long?  : boolean;
   limits?: number;
@@ -121,7 +124,7 @@ const UNLED: Flight = { begun: () => {}, end: () => {} };
 
 const COOL = 60e3;
 
-const DOWN = new Map<string, { until: number; why: string }>();
+const DOWN = new Map<string, { until: number; why: string; limited: boolean }>();
 
 export namespace AskAI {
 
@@ -136,31 +139,56 @@ export namespace AskAI {
     const out: Call = { wake, stop, done: promise };
     let picks = AskAI.falls(ask);
     let whys: (string | null)[] = picks.map(() => null);
+    let limited_picks = new Set<number>();
+    let progress: Progress[] = [];
+    let started = new Set<string>();
+    let blocks = ask.blocks;
+    let imgs = ask.imgs ?? [];
+    const steer = ask.steer === undefined ? undefined : { ...ask.steer, taken: [] as Say[] };
+    let seen_steers = 0;
+    let acted = false;
+    const remember_steers = () => {
+      const taken = steer?.taken ?? [];
+      progress.push(...taken.slice(seen_steers));
+      seen_steers = taken.length;
+    };
     const skip = (from: number): number => {
       const to = AskAI.up(picks, from);
       for (let i = from; i < to; i++) {
-        whys[i] = (DOWN.get(AskAI.down_key(picks[i]))?.why ?? "") + " (skipped for a minute)";
+        const down = DOWN.get(AskAI.down_key(picks[i]));
+        whys[i] = (down?.why ?? "") + " (skipped for a minute)";
+        if (down?.limited) {
+          limited_picks.add(i);
+        }
       }
       return to;
     };
     let k = skip(0);
     let limits = ask.limits ?? 0;
-    let reset: { until: number; vendor: Vendor } | undefined;
+    let reset: { until: number; vendor: Vendor; why?: string; limits: number } | undefined;
     const go = (): Try => {
       const run = picks[k];
       const from = k > 0 ? picks[k - 1] : null;
       const why = from === null ? "" : whys[k - 1] ?? DOWN.get(AskAI.down_key(from))?.why ?? "";
       let heard = picks.length === 1;
+      const fallback = k < picks.length - 1;
       const hear = (ev: Event) => {
+        if (fallback) {
+          remember_steers();
+          if (ev.$ === "Start") {
+            started.add(ev.of);
+          } else if (ev.$ === "Entry" && (ev.kind === "reply" || ev.kind === "tool" || ev.kind === "echo")) {
+            progress.push(ev);
+          }
+        }
         if (!heard && (ev.$ === "Delta" || (ev.$ === "Entry" && ev.kind !== "mind"))) {
           heard = true;
-          on({ $: "Run", run: Pick.named(run), from: from && Pick.named(from), why });
+          on({ $: "Run", run: Pick.named(run), from: from && Pick.named(from), why, limited: limited_picks.has(k - 1) });
         }
         on(ev);
       };
       const probe = picks.length > 1 && DOWN.has(AskAI.down_key(run));
-      const fallback = k < picks.length - 1;
-      return AskAI.start({ ...ask, ...run, probe, fallback, limits }, hear);
+      return AskAI.start({ ...ask, ...run, blocks, imgs, steer, probe, fallback, limits, fresh: ask.fresh && !acted }, hear);
     };
     let call = go();
     const run = async (): Promise<End> => {
@@ -170,16 +198,33 @@ export namespace AskAI {
         const off = failed && end.off === true;
         const unset = failed && end.stop === undefined;
         const up = !halt.signal.aborted && (end.ok || end.stop === "fail" || (end.stop === "down" && !off));
+        const capped = off && (end.limits !== undefined || end.quota === true);
         if (picks.length > 1 && (off || up)) {
-          AskAI.down(picks[k], off ? end.text : null);
+          AskAI.down(picks[k], off ? { why: end.text, limited: capped } : null);
         }
         whys[k] = failed ? end.text : null;
-        const next = (off || unset) && end.acted !== true && k < picks.length - 1;
+        acted ||= end.acted === true;
+        if (capped) {
+          limited_picks.add(k);
+        }
+        const next = (off || unset) && (capped || end.acted !== true) && k < picks.length - 1;
+        if (next) {
+          remember_steers();
+          const carried = AskAI.handoff(progress, started);
+          if (carried.text !== "") {
+            blocks = [...blocks, { text: carried.text, mark: false }];
+            imgs = [...imgs, ...carried.imgs];
+          }
+          steer?.taken.splice(0);
+          seen_steers = 0;
+          progress = [];
+          started = new Set();
+        }
         const wait = failed && !next && ask.patient === true;
         const left = picks[k];
         const limited = wait && end.limits !== undefined;
         if (end.limits !== undefined && end.until !== undefined && end.until < (reset?.until ?? Infinity)) {
-          reset = { until: end.until, vendor: left.vendor };
+          reset = { until: end.until, vendor: left.vendor, why: end.why, limits: end.limits };
         }
         if (wait) {
           const ms = Math.min(WEEK, Math.max(AGAIN, (end.until ?? 0) - Date.now()));
@@ -190,6 +235,7 @@ export namespace AskAI {
           if (!AskAI.same(now, picks)) {
             picks = now;
             whys = picks.map(() => null);
+            limited_picks = new Set();
           }
           if (!halt.signal.aborted) {
             on({ $: "Again", again: null });
@@ -197,9 +243,8 @@ export namespace AskAI {
         }
         if (halt.signal.aborted || (!next && !wait)) {
           const all = whys.flatMap((why, i) => (why === null ? [] : [picks[i].vendor + ":" + Pick.named(picks[i]).model + ": " + why]));
-          const until = end.limits === undefined ? end.until : reset?.until;
-          const vendor = end.limits === undefined ? undefined : reset?.vendor ?? left.vendor;
-          return failed && all.length > 1 ? { ...end, until, vendor, text: "no model answered; " + all.join("; ") } : { ...end, vendor };
+          const limit = end.limits === undefined ? {} : reset ?? { vendor: left.vendor };
+          return failed && all.length > 1 ? { ...end, ...limit, text: "no model answered; " + all.join("; ") } : { ...end, ...limit };
         }
         k = skip(next ? k + 1 : 0);
         limits = limited && picks[k] === left ? end.limits ?? 0 : 0;
@@ -209,6 +254,25 @@ export namespace AskAI {
     };
     run().then(resolve, (err: unknown) => resolve(AskAI.end(err_why(err))));
     return out;
+  }
+
+  export function handoff(progress: Progress[], started: Set<string>): Say {
+    const lines: string[] = [];
+    const imgs: Img[] = [];
+    const results = new Set(progress.flatMap((event) => ("$" in event && event.kind === "echo" && event.of !== undefined ? [event.of] : [])));
+    for (const event of progress) {
+      if (!("$" in event)) {
+        lines.push(JSON.stringify({ kind: "steering message", text: event.text }));
+        imgs.push(...event.imgs);
+      } else if (event.kind !== "tool" || !event.queued || (event.of !== undefined && started.has(event.of))) {
+        const kind = event.kind === "tool" ? "tool call" : event.kind === "echo" ? "tool result" : "assistant reply";
+        const no_result = event.kind === "tool" && event.of !== undefined && !results.has(event.of);
+        lines.push(JSON.stringify({ kind, id: event.of, text: event.text, ...(no_result ? { status: "no recorded result; may have run" } : {}) }));
+        imgs.push(...(event.imgs ?? []));
+      }
+    }
+    const head = "Ki switched models during this turn. Continue the same task from the progress below. Do not repeat completed tool calls. Verify the outcome of any call without a recorded result before retrying it.";
+    return { text: lines.length === 0 ? "" : head + "\n" + lines.join("\n"), imgs };
   }
 
   export function labeled(said: Said, working = false): string {
@@ -282,13 +346,13 @@ export namespace AskAI {
     return k;
   }
 
-  export function down(run: Pick, why: string | null): void {
+  export function down(run: Pick, off: { why: string; limited: boolean } | null): void {
     const key = AskAI.down_key(run);
-    if ((why !== null) !== DOWN.has(key)) {
-      console.error(Pick.label(Pick.named(run)) + (why !== null ? ": failed; calls go on with their fallbacks" : ": answers again"));
+    if ((off !== null) !== DOWN.has(key)) {
+      console.error(Pick.label(Pick.named(run)) + (off !== null ? ": unavailable to profiles" : ": available to profiles again"));
     }
-    if (why !== null) {
-      DOWN.set(key, { until: Date.now() + COOL, why });
+    if (off !== null) {
+      DOWN.set(key, { until: Date.now() + COOL, ...off });
     } else {
       DOWN.delete(key);
     }

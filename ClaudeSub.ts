@@ -587,9 +587,18 @@ export namespace ClaudeSub {
     }
   }
 
-  export function backs(content: unknown[]): Array<{ kind: "echo"; text: string; of: string }> {
+  export function backs(content: unknown[]): Array<{ kind: "echo"; text: string; of: string; imgs: Img[] }> {
     const results = content.filter((b) => get(b, "type") === "tool_result");
-    return results.map((b) => ({ kind: "echo", text: (get(b, "is_error") ? "error: " : "") + (AskAI.show(get(b, "content")) || "(no output)"), of: text_of(get(b, "tool_use_id")) }));
+    return results.map((b) => {
+      const body = get(b, "content");
+      const imgs = (Array.isArray(body) ? body : []).flatMap((part: unknown) => {
+        const img = get(part, "source");
+        const type = get(img, "media_type");
+        const data = get(img, "data");
+        return get(part, "type") === "image" && get(img, "type") === "base64" && typeof type === "string" && typeof data === "string" ? [{ type, data }] : [];
+      });
+      return { kind: "echo", text: (get(b, "is_error") ? "error: " : "") + (AskAI.show(body) || "(no output)"), of: text_of(get(b, "tool_use_id")), imgs };
+    });
   }
 
   // the messages Claude Code reads, as they come; closed: it ends. A put's
