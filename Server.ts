@@ -1169,7 +1169,7 @@ export namespace Chat {
     const input = Pick.input(asks ?? pick);
     const start = Memory.bytes(Prompts.prompt("sub")) + sub.view.reduce((n, b) => n + Memory.bytes(b.text), 0);
     const tokens = sub.used === null ? Math.ceil((start + sub.bytes) / TOKEN) : sub.used + Math.ceil((sub.bytes - sub.used_at) / TOKEN);
-    return { from: 0, used: Math.min(1, tokens / input), tokens, input, model: pick.model, guess: sub.used === null };
+    return { from: 0, used: Math.min(1, tokens / input), tokens, input, model: (asks ?? pick).model, guess: sub.used === null };
   }
 
   export function sub_row(chat: Chat, sub: Sub<Msg>): SubRow {
