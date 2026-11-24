@@ -29,7 +29,7 @@ const SOURCES = "web_search_call.action.sources";
 // Ki's tools whose optional arguments stay optional: OpenAI makes a tool
 // with no strict strict, every argument required, and a model then fills
 // one it would leave out (#207)
-const LOOSE = ["zoom"];
+const LOOSE = ["zoom", "spawn"];
 
 export namespace OpenAI {
 
