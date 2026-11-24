@@ -241,7 +241,7 @@ function line_html(row: Extract<View.Row, { $: "Line" }>): string {
 function group_html(row: Extract<View.Row, { $: "Group" }>): string {
   const at = row.id === null ? "" : ` data-a="${row.id}"`;
   const counts = new Map<string, number>();
-  row.lines.forEach((l) => counts.set(l.call.name, (counts.get(l.call.name) ?? 0) + 1));
+  row.lines.map(View.line_tool).forEach((name) => counts.set(name, (counts.get(name) ?? 0) + 1));
   const what = [...counts].map(([name, n]) => n + "x " + name).join(", ");
   const devices = [...new Set(row.lines.map((l) => l.call.device).filter((d) => d !== ""))];
   const where = devices.length === 0 ? "" : `<span class="on">· ${esc(devices.join(", "))}</span>`;

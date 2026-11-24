@@ -100,6 +100,8 @@ const P = {
   copy  : 0,
   // the chat or subagent page whose rows #log holds (shown_key)
   drawn : "",
+  // the rows' last calls drawn in the tail, its calls going on from them
+  joins : false,
 };
 
 const SCROLL = {
@@ -1470,6 +1472,10 @@ function paint(): void {
   }
   // another chat's or page's rows are no row of this one's
   const spares = P.drawn === shown ? [...$("#log .tail").children] : null;
+  if (View.view_joins(v) !== P.joins) {
+    P.joins = !P.joins;
+    P.rows = true;
+  }
   if (P.rows) {
     markup($("#log .rows"), View.view_body(v).map(Html.row_html), spares);
     Box.box_sizes($("#log .rows"));

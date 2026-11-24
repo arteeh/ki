@@ -701,14 +701,35 @@ export function view_act(v: View, act: Act): Client[] {
   }
 }
 
+// the calls the rows end on, while the tail goes on with calls: they show
+// in the tail, one run with those (#210)
+let CARRIED: Line[] = [];
+
 export function view_body(v: View): Row[] {
+  const rows = body_rows(v);
+  let k = rows.length;
+  while (k > 0 && is_call(rows[k - 1])) {
+    k--;
+  }
+  CARRIED = view_joins(v) ? rows.slice(k) as Line[] : [];
+  return grouped(rows.slice(0, rows.length - CARRIED.length));
+}
+
+function body_rows(v: View): Row[] {
   if (v.page !== null) {
     const sub = view_sub(v);
     const rows = page_rows(v.page, v.thinking !== false, sub);
-    return grouped(backgrounded(sub === undefined ? rows : running(rows, 0), v.bg));
+    return backgrounded(sub === undefined ? rows : running(rows, 0), v.bg);
   }
   const rows = view_lines(view_rows(v, v.parts).flat());
-  return grouped(backgrounded(v.busy ? running(rows, v.turn) : rows, v.bg));
+  return backgrounded(v.busy ? running(rows, v.turn) : rows, v.bg);
+}
+
+// whether what streams in starts with a call: the calls the rows end on go
+// on in it, the rows drawn again when that changes
+export function view_joins(v: View): boolean {
+  const first = tail_live(v)[0];
+  return first !== undefined && is_call(first);
 }
 
 // two and more tool calls in a row are one line that opens on them, as
@@ -741,8 +762,14 @@ function grouped(rows: Row[]): Row[] {
   return out;
 }
 
+// a call, one being written too; not a result whose call is in a fold
 function is_call(r: Row): r is Line {
-  return r.$ === "Line" && r.call.name !== "";
+  return r.$ === "Line" && r.rows[0]?.$ === "Msg" && r.rows[0].kind === "tool";
+}
+
+// its tool, as its group counts it: one being written by the name it has
+export function line_tool(l: Line): string {
+  return l.call.name !== "" ? l.call.name : Call.tool_name(/^\S*/.exec(l.call.head)?.[0] ?? "");
 }
 
 // a subagent's page shown near its top: its earlier entries (#143)
@@ -848,6 +875,14 @@ function thought_last(v: View): boolean {
   return last !== undefined && v.minds.has(last[0] + last[1] - 1);
 }
 
+// what streams in, as rows not yet grouped
+function tail_live(v: View): Row[] {
+  if (v.page !== null) {
+    return live_rows(v.page.live.filter((l) => v.thinking !== false || l.kind !== "mind"), view_sub(v) !== undefined);
+  }
+  return live_rows(v.live.filter((l) => v.thinking !== false || l.kind !== "mind"), v.busy && v.wait === "");
+}
+
 // the rows of the messages that wait in the tail, queued or unsent, made
 // once while they wait, so each is parsed and drawn once, not at each paint
 let WAITS = new Map<string, Row[]>();
@@ -861,19 +896,21 @@ export function view_tail(v: View): Row[] {
     WAITS.set(key, rows);
     return rows;
   };
+  const carried = view_joins(v) ? CARRIED : [];
+  const streamed = grouped([...carried, ...tail_live(v)]);
+  const after_run = (thought: Row[]) => (carried.length > 0 ? [streamed[0], ...thought, ...streamed.slice(1)] : [...thought, ...streamed]);
   if (v.page !== null) {
     const live = v.page.live;
-    const page = live.filter((l) => v.thinking !== false || l.kind !== "mind");
     const thought = v.thinking === false && live.some((_, k) => thinks(live, k)) ? [THINKING] : [];
     const sub = view_sub(v);
     const queued = (sub?.queue ?? []).flatMap((text) => waits("user", text, true));
     const last = v.page.log?.at(-1);
     const limit = sub?.limit ?? null;
     const idle = sub !== undefined && v.page.live.length === 0 && (last?.kind !== "tool" || last.echo !== undefined) && limit === null;
-    return [...thought, ...grouped(live_rows(page, sub !== undefined)), ...(idle ? [WAITING] : []), ...(limit === null ? [] : [Cap(limit_show(limit))]), ...queued];
+    return [...after_run(thought), ...(idle ? [WAITING] : []), ...(limit === null ? [] : [Cap(limit_show(limit))]), ...queued];
   }
   const thought = v.thinking === false && (v.live.some((_, k) => thinks(v.live, k)) || (v.live.length === 0 && v.busy && v.wait === "" && thought_last(v))) ? [THINKING] : [];
-  const rows = [...thought, ...grouped(live_rows(v.live.filter((l) => v.thinking !== false || l.kind !== "mind"), v.busy && v.wait === ""))];
+  const rows = after_run(thought);
   const load = v.importing !== null ? [Cap(progress_show(v.importing))] : [];
   const said = !v.up ? v.out.flatMap((p) => waits("user", p.said, false)) : [];
   const kept = said.length > 0 ? [...said, Cap(UNSENT)] : [];
