@@ -51,6 +51,7 @@ export type Step = {
   refusal?   : Refusal;
   until?     : number;
   limits?    : number;
+  usage?     : boolean;
   open?      : boolean;
   container? : string;
 };
@@ -224,7 +225,7 @@ export namespace Agent {
         }
         Agent.take_seat(seat, step.why);
         if (limit) {
-          const off = await Limit.hit(run.limit, step.until ?? Agent.reset(res, Date.now()), run.end.acted === true, step.why);
+          const off = await Limit.hit(run.limit, step.until ?? Agent.reset(res, Date.now()), run.end.acted === true, step.why, step.usage);
           if (off !== null) {
             return { ...step, stop: "down", off: true, refusal: { why: off.why, say: off.say, until: off.until }, limits: off.limits };
           }
@@ -409,7 +410,8 @@ export namespace Agent {
       const off = spent || OFF.includes(res.status) || refusal !== null;
       const stop = refusal !== null ? "down" : text !== null && Agent.limited(res, text) && !spent ? "limit" : text !== null && Agent.passing(res) && !spent ? "busy" : "down";
       const until = text !== null && stop === "limit" ? wire.reset?.(res, text) ?? undefined : undefined;
-      step = text !== null || res.body === null ? { ...Agent.fail(why, [], stop), off, refusal: refusal ?? undefined, until } : await Agent.stream(wire, run, res.body, timer, seen, st, flight.begun);
+      const usage = stop === "limit" && (res.status === 400 || (text !== null && Agent.usage_cap(text)));
+      step = text !== null || res.body === null ? { ...Agent.fail(why, [], stop), off, refusal: refusal ?? undefined, until, usage } : await Agent.stream(wire, run, res.body, timer, seen, st, flight.begun);
     } catch (err) {
       step = Agent.fail(err_why(err), [], "busy");
     }
@@ -436,6 +438,15 @@ export namespace Agent {
   // an API key's owner set (#201)
   export function limited(res: Response, body: string): boolean {
     return (res.status === 429 && !body.includes("insufficient_quota")) || (res.status === 400 && CAPPED.test(body));
+  }
+
+  export function usage_cap(body: string): boolean {
+    try {
+      const err = get(JSON.parse(body) as unknown, "error");
+      return [get(err, "type"), get(err, "code")].includes("usage_limit_reached");
+    } catch {
+      return false;
+    }
   }
 
   export function passing(res: Response): boolean {

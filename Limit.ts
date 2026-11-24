@@ -40,12 +40,12 @@ export namespace Limit {
     return { ask, on, signal, n: ask.limits ?? 0, poke: () => {} };
   }
 
-  export async function hit(l: Limit, told: number | null, acted: boolean, why: string): Promise<Off | null> {
+  export async function hit(l: Limit, told: number | null, acted: boolean, why: string, usage = false): Promise<Off | null> {
     const { ms, known } = Limit.wait_for(told, l.n, l.ask.patient ? AGAIN : LIMIT);
-    if (Limit.ends(l.ask, acted, ms)) {
+    if ((usage && l.ask.fresh === true && !acted) || Limit.ends(l.ask, acted, ms)) {
       return Limit.off(why, told, l.ask, l.n);
     }
-    await Limit.park(l, ms, known, Limit.reason(why));
+    await Limit.park(l, ms, known, Limit.reason(why), usage && l.ask.agent === true);
     return null;
   }
 
@@ -87,10 +87,10 @@ export namespace Limit {
     return { why, say, until: until ?? undefined, limits: n };
   }
 
-  export async function park(l: Limit, ms: number, known: boolean, why: string | undefined): Promise<void> {
+  export async function park(l: Limit, ms: number, known: boolean, why: string | undefined, report = false): Promise<void> {
     const wake = new AbortController();
     l.poke = () => wake.abort();
-    const parked = ms >= LONG;
+    const parked = report || ms >= LONG;
     const vendor = l.ask.vendor;
     if (parked) {
       l.on({ $: "Limit", limit: { until: Date.now() + ms, known, vendor, why } });

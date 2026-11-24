@@ -85,7 +85,7 @@ type Code = {
   cut  : "over" | "steer" | null;
 };
 
-type Out = Partial<End> & { limit?: { until: number | null; text: string }; steered?: boolean };
+type Out = Partial<End> & { limit?: { until: number | null; text: string; usage: boolean }; steered?: boolean };
 
 type Wait = { imp: boolean; n: number; go: () => void };
 
@@ -457,7 +457,7 @@ export namespace ClaudeSub {
           void ClaudeSub.close(code);
           code = null;
         }
-        const off = await Limit.hit(limit, got.limit.until, acted.v, got.limit.text);
+        const off = await Limit.hit(limit, got.limit.until, acted.v, got.limit.text, got.limit.usage);
         if (off !== null) {
           return ClaudeSub.off(ask, off, acted.v);
         }
@@ -562,7 +562,7 @@ export namespace ClaudeSub {
       const ok = msg.subtype === "success" && !msg.is_error;
       const why = msg.subtype === "success" ? msg.result : msg.errors.join("; ");
       if (ClaudeSub.limit_ended(ok && code.cut !== "over", hit, code.over, info)) {
-        return { limit: { until: info && ClaudeSub.reset(info), text: why } };
+        return { limit: { until: info && ClaudeSub.reset(info), text: why, usage: code.over || info?.status === "rejected" } };
       }
       if (ok && code.cut === "steer") {
         return { steered: true };
