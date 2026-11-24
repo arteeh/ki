@@ -504,8 +504,9 @@ function view_heard(v: View, msg: Server): Client[] {
       if (msg.agent !== undefined) {
         const { $, agent, id, sent, ...entry } = msg;
         const log = v.pages.get(agent)?.log;
-        // the reasoning it keeps came live before it (#204)
-        while (entry.mind !== undefined && log?.at(-1)?.kind === "mind" && log.at(-1)?.id === undefined) {
+        // the reasoning that came live before it is its own or no one's
+        // (#204)
+        while (id !== undefined && log?.at(-1)?.kind === "mind" && log.at(-1)?.id === undefined) {
           log.pop();
         }
         log?.push(id === undefined ? entry : { ...entry, id });
@@ -531,6 +532,10 @@ function view_heard(v: View, msg: Server): Client[] {
     case "state": {
       const { $, agent, replaced, ...state } = msg;
       Object.assign(v, state);
+      // what came live that no message kept, once the turn is done (#204)
+      if (!v.busy) {
+        v.minds.clear();
+      }
       return [];
     }
     case "note":
@@ -567,7 +572,7 @@ export function view_copy(v: View, from: number): Server[] {
   for (const at of [...(before === undefined ? [] : [v.firsts.get(before) ?? before]), ...parts.flatMap(([id, n]) => (n === 1 ? [v.firsts.get(id) ?? id] : []))]) {
     const entry = v.whole.get(at);
     if (entry !== undefined) {
-      whole[at] = entry;
+      whole[at] = v.thinking === false ? unminded(entry) : entry;
     }
   }
   for (const [id, n] of parts) {
@@ -583,10 +588,17 @@ export function view_copy(v: View, from: number): Server[] {
 
 // a copy of the open subagent page, as the messages a link sends for it,
 // its entries from the one with id from on (#185)
-export function view_page_copy(page: Page, from: number): Server[] {
+export function view_page_copy(page: Page, from: number, minds: boolean): Server[] {
   const log = page.log ?? [];
   const k = Math.max(0, log.findIndex((e) => (e.id ?? Infinity) >= from));
-  return [{ $: "agent", name: page.name, found: true, from: page.from + k, entries: log.slice(k), done: page.done, how: page.how }, { $: "live", agent: page.name, live: page.live }];
+  const entries = minds ? log.slice(k) : log.slice(k).filter((e) => e.kind !== "mind").map(unminded);
+  return [{ $: "agent", name: page.name, found: true, from: page.from + k, entries, done: page.done, how: page.how }, { $: "live", agent: page.name, live: page.live }];
+}
+
+// an entry without the reasoning a copy needn't hold while it is hidden
+function unminded(entry: Entry): Entry {
+  const { mind, ...rest } = entry;
+  return mind === undefined ? entry : rest;
 }
 
 // a copy of the open subagent page, while the view holds none of it: the
@@ -1020,8 +1032,8 @@ function view_entry(v: View, msg: Server & { $: "entry" }): void {
   }
   const last = v.parts.at(-1);
   if (id !== undefined) {
-    // the reasoning it keeps came live before it (#204)
-    if (entry.mind !== undefined && last !== undefined) {
+    // the reasoning that came live before it is its own or no one's (#204)
+    if (last !== undefined) {
       v.minds.delete(last[0] + last[1] - 1);
     }
     view_whole(v, id, entry);

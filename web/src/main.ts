@@ -312,7 +312,7 @@ function copy_keep(): void {
   let msgs: View.Server[] = [];
   let said = "";
   for (;;) {
-    msgs = page === null ? View.view_copy(v, from) : View.view_page_copy(page, from);
+    msgs = page === null ? View.view_copy(v, from) : View.view_page_copy(page, from, v.thinking !== false);
     said = JSON.stringify(msgs);
     const next = ids.find((id) => id > from);
     if (said.length <= COPY_MOST || next === undefined) {
