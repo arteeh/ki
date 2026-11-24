@@ -6,6 +6,7 @@ import { CAP, clip, clip_end } from "./Clip.ts";
 import { err_code, err_why } from "./Err.ts";
 import { get, list as listed, text_of } from "./Json.ts";
 import { FIT, HEAD, IMAGE, image_kind, MOVED, PIXELS } from "./View.ts";
+import { Win, type WinJob } from "./Win.ts";
 
 export type Job = { name: string; input: Record<string, unknown>; cwd: string };
 
@@ -52,15 +53,21 @@ export const JOBS = { running: new Map<Bun.Subprocess, Bg>(), n: 0, changed: () 
 // jobs ended with their agent: nothing is left to tell
 const KILLED = new Set<Bun.Subprocess>();
 
-// every job by its id while its process group may still hold processes,
-// its shell gone or not: stop_job stops it by that id (#212); stopped, its
-// report says so
-type Tracked = { proc: Bun.Subprocess; job: Bg; born: number };
-const TRACKED = new Map<string, Tracked>();
+// a shell's processes, proven its own (#212): on Unix its process group,
+// while its shell runs or a process in it still has the shell's mark in
+// its environment; on Windows the job object it was in before its command
+// ran (win: null if Windows gave none)
+type Group = { proc: Bun.Subprocess; mark: string; win: WinJob | null };
 
-// how much earlier than its shell Windows may date a process it started
-const BORN = 1000;
-const STOPPED = new Set<Bun.Subprocess>();
+// ours: a process of it runs; none: none does; unknown: what runs can't
+// be told to be its own
+type Held = "ours" | "none" | "unknown";
+
+// every job by its id while it may still hold processes, its shell gone or
+// not: stop_job stops it by that id; stopping: till its stop_job ends,
+// whether that stopped it, which its report then says
+type Tracked = Group & { job: Bg; stopping?: Promise<boolean> };
+const TRACKED = new Map<string, Tracked>();
 
 const GONE = 3000;
 
@@ -194,13 +201,19 @@ export namespace Machine {
 
   export async function shell(cwd: string, command: string, ms: number, signal: AbortSignal): Promise<Out> {
     SHELLS.forEach((_, p) => Machine.group_may_hold_job(p) || SHELLS.delete(p));
-    if (!WIN) {
-      TRACKED.forEach((t, id) => Machine.group_may_hold_job(t.proc) || TRACKED.delete(id));
+    for (const [id, t] of TRACKED) {
+      if (!JOBS.running.has(t.proc) && t.stopping === undefined && Machine.gone(t)) {
+        Machine.untrack(id);
+      }
     }
     const agent = path.basename(cwd);
-    const born = Date.now();
     const start = performance.now();
-    const proc = Machine.spawn_in_group_marked(cwd, command, agent);
+    const mark = crypto.randomUUID();
+    const proc = Machine.spawn_in_group_marked(cwd, command, agent, mark);
+    const group: Group = { proc, mark, win: WIN ? Win.job(proc.pid) : null };
+    if (proc.stdin !== undefined) {
+      void proc.stdin.end();
+    }
     const out = clip();
     SHELLS.set(proc, agent);
     const readers = Machine.decoded_output(proc);
@@ -249,18 +262,25 @@ export namespace Machine {
         log.ok = false;
       }
       const where = () => "output in " + log.file + (log.ok ? "" : " (incomplete: it couldn't be written)");
+      const t: Tracked = { ...group, job };
       JOBS.running.set(proc, job);
-      TRACKED.set(job.id, { proc, job, born });
+      TRACKED.set(job.id, t);
       JOBS.changed();
-      void read.then(() => {
+      void read.then(async () => {
         JOBS.running.delete(proc);
         JOBS.changed();
         if (KILLED.delete(proc)) {
           return;
         }
-        JOBS.ended(job, (STOPPED.delete(proc) ? "stopped by stop_job" : Machine.exit(proc)) + " in " + Math.round(took()) + " s, " + where() + Machine.fenced(shown()));
+        const stopped = await (t.stopping ?? false);
+        const left = stopped ? "none" : Machine.held(t);
+        const still = left === "ours" ? " (its shell ended, but what it started still runs: stop_job " + job.id + " ends it)" : "";
+        JOBS.ended(job, (stopped ? "stopped by stop_job" : Machine.exit(proc)) + " in " + Math.round(took()) + " s" + still + ", " + where() + Machine.fenced(shown()));
       });
       return { text: shown() + MOVED + Math.round(took()) + " s as job " + job.id + ", pid " + proc.pid + ", " + where() + "; it reports back when it ends)", fail: false };
+    }
+    if (group.win !== null) {
+      Win.close(group.win);
     }
     fs.rm(log.file, { force: true }, () => {});
     await proc.exited;
@@ -293,12 +313,14 @@ export namespace Machine {
     return proc.signalCode ? "killed by " + proc.signalCode : "exit " + String(proc.exitCode);
   }
 
-  export function spawn_in_group_marked(cwd: string, command: string, agent: string): Bun.Subprocess<"ignore", "pipe", "pipe" | "ignore"> {
-    const argv = WIN ? [SHELL, "-NoProfile", "-NonInteractive", "-Command", PWSH + command] : [SHELL, "-c", "exec 2>&1\n" + command];
+  // mark: the shell's own, in its environment; on Windows its command waits
+  // for its stdin to end, the shell in its job object by then
+  export function spawn_in_group_marked(cwd: string, command: string, agent: string, mark: string): Bun.Subprocess<"ignore" | "pipe", "pipe", "pipe" | "ignore"> {
+    const argv = WIN ? [SHELL, "-NoProfile", "-NonInteractive", "-Command", PWSH + "$null = [Console]::In.ReadToEnd(); " + command] : [SHELL, "-c", "exec 2>&1\n" + command];
     return Bun.spawn(argv, {
       cwd         : cwd,
-      env         : { ...process.env, KI_RUN: RUN, KI_AGENT: agent },
-      stdin       : "ignore",
+      env         : { ...process.env, KI_RUN: RUN, KI_AGENT: agent, KI_SHELL: mark },
+      stdin       : WIN ? "pipe" : "ignore",
       stdout      : "pipe",
       stderr      : WIN ? "pipe" : "ignore",
       detached    : !WIN,
@@ -306,7 +328,7 @@ export namespace Machine {
     });
   }
 
-  export function decoded_output(proc: Bun.Subprocess<"ignore", "pipe", "pipe" | "ignore">): ReadableStreamDefaultReader<string>[] {
+  export function decoded_output(proc: Bun.Subprocess<"ignore" | "pipe", "pipe", "pipe" | "ignore">): ReadableStreamDefaultReader<string>[] {
     const streams = [proc.stdout, ...(WIN && proc.stderr instanceof ReadableStream ? [proc.stderr] : [])];
     return streams.map((s) => s.pipeThrough(new TextDecoderStream()).getReader());
   }
@@ -361,7 +383,7 @@ export namespace Machine {
   }
 
   // a job of the agents': all of its processes, its shell gone or not, and
-  // Stopped only once none is left
+  // Stopped only once none is left; none that can't be told its own
   export async function stop_job(id: string, agents: string[]): Promise<Out> {
     const t = TRACKED.get(id);
     const ended = { text: "Job " + id + " had already ended: nothing was left to stop.", fail: false };
@@ -372,43 +394,74 @@ export namespace Machine {
     if (!agents.includes(t.job.agent)) {
       return { text: "Job " + id + " isn't yours: nothing was stopped.", fail: true };
     }
-    const left = await Machine.job_left(t);
-    if (left.length === 0) {
-      TRACKED.delete(id);
+    if (t.stopping !== undefined) {
+      return { text: "Job " + id + " is being stopped already.", fail: true };
+    }
+    const now = Machine.held(t);
+    if (now === "none") {
+      Machine.untrack(id);
       return ended;
     }
-    STOPPED.add(t.proc);
+    if (now === "unknown") {
+      const why = WIN ? "Windows gave it no job object" : "its shell ended and no process left in its group has its mark";
+      return { text: "Ki can't tell which processes are job " + id + "'s (" + why + "): nothing was stopped.", fail: true };
+    }
+    let done = (_: boolean) => {};
+    t.stopping = new Promise<boolean>((ok) => (done = ok));
     const until = Date.now() + GONE;
-    for (let now = left; now.length > 0; now = await Machine.job_left(t)) {
-      if (Date.now() > until) {
-        return { text: "Job " + id + " didn't stop: " + now.length + " of its processes still run (" + now.join(", ") + ").", fail: true };
+    let left: Held = now;
+    for (; left !== "none" && Date.now() <= until; left = Machine.held(t)) {
+      if (left === "ours") {
+        Machine.end_group(t);
       }
-      now.forEach((pid) => Machine.kill(pid));
       await Bun.sleep(100);
     }
-    TRACKED.delete(id);
+    t.stopping = undefined;
+    done(left === "none");
+    if (left !== "none") {
+      return { text: "Job " + id + " didn't stop: some of its processes still run.", fail: true };
+    }
+    Machine.untrack(id);
     return { text: "Stopped job " + id + ": " + t.job.command.replace(/\s+/g, " ").trim().slice(0, 100), fail: false };
   }
 
-  // the processes of a job still running: its process group (as -pgid); on
-  // Windows, which has no groups, its shell and every process under it
-  // started since, an ended shell's children still naming it their parent
-  export async function job_left(t: Tracked): Promise<number[]> {
-    if (!WIN) {
-      return Machine.group_may_hold_job(t.proc) ? [-t.proc.pid] : [];
+  // whether processes of a shell still run: on Unix its group while its
+  // shell runs, or while a process in it has its mark; once its shell
+  // ended an empty group's id may be another's, a marked process never is
+  export function held(g: Group): Held {
+    if (WIN) {
+      const n = g.win === null ? null : Win.running(g.win);
+      return n === null ? "unknown" : n > 0 ? "ours" : "none";
     }
-    const ps = "Get-CimInstance Win32_Process | ForEach-Object { \"$($_.ProcessId) $($_.ParentProcessId) $($_.CreationDate.ToUniversalTime().ToString('o'))\" }";
-    const out = await Machine.exec([SHELL, "-NoProfile", "-NonInteractive", "-Command", PWSH + ps], AbortSignal.timeout(GONE * 3));
-    const procs = out.out.toString().split("\n").map((l) => l.trim().split(" ")).filter((w) => w.length === 3).map(([pid, up, at]) => ({ pid: Number(pid), up: Number(up), at: Date.parse(at) }));
-    const mine = new Set<number>(t.proc.exitCode === null && t.proc.signalCode === null ? [t.proc.pid] : []);
-    for (let more = true; more; ) {
-      more = false;
-      for (const p of procs.filter((p) => !mine.has(p.pid) && (p.up === t.proc.pid || mine.has(p.up)) && p.at >= t.born - BORN)) {
-        mine.add(p.pid);
-        more = true;
-      }
+    if (g.proc.exitCode === null && g.proc.signalCode === null) {
+      return "ours";
     }
-    return [...mine];
+    if (!Machine.alive(-g.proc.pid)) {
+      return "none";
+    }
+    const rows = Bun.spawnSync(PS).stdout.toString().split("\n").map((line) => line.trim().split(/\s+/));
+    return rows.some((words) => words[1] === String(g.proc.pid) && words.includes("KI_SHELL=" + g.mark)) ? "ours" : "unknown";
+  }
+
+  // nothing of it runs, as far as is known without listing processes
+  export function gone(g: Group): boolean {
+    return WIN ? g.win !== null && Win.running(g.win) === 0 : (g.proc.exitCode !== null || g.proc.signalCode !== null) && !Machine.alive(-g.proc.pid);
+  }
+
+  export function end_group(g: Group): void {
+    if (g.win !== null) {
+      Win.end(g.win);
+    } else if (!WIN) {
+      Machine.kill(-g.proc.pid);
+    }
+  }
+
+  export function untrack(id: string): void {
+    const win = TRACKED.get(id)?.win ?? null;
+    if (win !== null) {
+      Win.close(win);
+    }
+    TRACKED.delete(id);
   }
 
   // jobs: its background jobs too, which then report nothing
