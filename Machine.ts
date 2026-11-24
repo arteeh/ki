@@ -68,6 +68,8 @@ type Held = "ours" | "none" | "unknown";
 // whether that stopped it, which its report then says
 type Tracked = Group & { job: Bg; stopping?: Promise<boolean> };
 const TRACKED = new Map<string, Tracked>();
+const FINISHED = new Map<string, string>();
+const RECENT = 256;
 
 const GONE = 3000;
 
@@ -274,7 +276,10 @@ export namespace Machine {
         }
         const stopped = await (t.stopping ?? false);
         const left = stopped ? "none" : Machine.held(t);
-        const still = left === "ours" ? " (its shell ended, but what it started still runs: stop_job " + job.id + " ends it)" : "";
+        const still = left === "ours" ? " (its shell ended, but what it started still runs: stop_job " + job.id + " ends it)" : left === "unknown" ? " (Ki can't verify that all its processes ended)" : "";
+        if (left === "none" || (WIN && t.win === null)) {
+          Machine.untrack(job.id, left === "none");
+        }
         JOBS.ended(job, (stopped ? "stopped by stop_job" : Machine.exit(proc)) + " in " + Math.round(took()) + " s" + still + ", " + where() + Machine.fenced(shown()));
       });
       return { text: shown() + MOVED + Math.round(took()) + " s as job " + job.id + ", pid " + proc.pid + ", " + where() + "; it reports back when it ends)", fail: false };
@@ -387,12 +392,16 @@ export namespace Machine {
   export async function stop_job(id: string, agents: string[]): Promise<Out> {
     const t = TRACKED.get(id);
     const ended = { text: "Job " + id + " had already ended: nothing was left to stop.", fail: false };
+    const owner = t?.job.agent ?? FINISHED.get(id);
+    if (owner !== undefined && !agents.includes(owner)) {
+      return { text: "Job " + id + " isn't yours: nothing was stopped.", fail: true };
+    }
     if (t === undefined) {
       const logged = /^j\d+$/.test(id) && fs.existsSync(path.join(Machine.home(SCRATCH), "jobs", id + ".log"));
-      return logged ? ended : { text: "No job " + id + " on this device.", fail: true };
-    }
-    if (!agents.includes(t.job.agent)) {
-      return { text: "Job " + id + " isn't yours: nothing was stopped.", fail: true };
+      if (owner !== undefined) {
+        return ended;
+      }
+      return { text: logged ? "Job " + id + " is no longer tracked on this device: nothing was stopped." : "No job " + id + " on this device.", fail: true };
     }
     if (t.stopping !== undefined) {
       return { text: "Job " + id + " is being stopped already.", fail: true };
@@ -456,12 +465,24 @@ export namespace Machine {
     }
   }
 
-  export function untrack(id: string): void {
-    const win = TRACKED.get(id)?.win ?? null;
-    if (win !== null) {
-      Win.close(win);
+  export function untrack(id: string, finished = true): void {
+    const t = TRACKED.get(id);
+    if (t === undefined) {
+      return;
+    }
+    if (t.win !== null) {
+      Win.close(t.win);
     }
     TRACKED.delete(id);
+    if (finished) {
+      FINISHED.set(id, t.job.agent);
+      if (FINISHED.size > RECENT) {
+        const first = FINISHED.keys().next().value;
+        if (first !== undefined) {
+          FINISHED.delete(first);
+        }
+      }
+    }
   }
 
   // jobs: its background jobs too, which then report nothing
