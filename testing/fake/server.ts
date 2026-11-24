@@ -235,6 +235,7 @@ function openai(vendor: Vendor, model: string, sent: Sent, used: Used): Response
   ev("response.in_progress", { response: response(model, "in_progress", [], null) });
   const done: object[] = [];
   let out = 0;
+  let end: unknown;
   sent.blocks.forEach((b, output_index) => {
     if ("think" in b) {
       const item = { id: hex("rs_"), type: "reasoning", summary: [], encrypted_content: "gAAAAB" + id("", 64) };
@@ -252,9 +253,11 @@ function openai(vendor: Vendor, model: string, sent: Sent, used: Used): Response
       return;
     }
     if ("search" in b) {
-      // as chatgpt.com streamed gpt-6-luna's, 2026-11-24; its "status" and
-      // "quiet" (no web_search_call events) are the fake's, not the action's
-      const { status = "completed", quiet, ...act } = b.search;
+      // as chatgpt.com streamed gpt-6-luna's, 2026-11-24; its "status",
+      // "quiet" (no web_search_call events) and "end" (how the response
+      // ends after it) are the fake's, not the action's
+      const { status = "completed", quiet, end: ends, ...act } = b.search;
+      end ??= ends;
       const action = sent.sources ? act : { ...act, sources: undefined };
       const item = { id: hex("ws_"), type: "web_search_call", status: "in_progress" };
       const step = (type: string) => {
@@ -302,7 +305,14 @@ function openai(vendor: Vendor, model: string, sent: Sent, used: Used): Response
   const details = vendor === "openai-api" ? { cached_tokens: used.read, cache_write_tokens: used.write } : { cached_tokens: used.read };
   const input = used.input + used.read + used.write;
   const usage = { input_tokens: input, input_tokens_details: details, output_tokens: out, output_tokens_details: { reasoning_tokens: 0 }, total_tokens: input + out };
-  ev("response.completed", { response: response(model, "completed", vendor === "openai-sub" ? [] : done, usage) });
+  const output = vendor === "openai-sub" ? [] : done;
+  if (end === "failed") {
+    ev("response.failed", { response: { ...response(model, "failed", output, usage), error: { code: "invalid_prompt", message: "The fake's response failed after its search." } } });
+  } else if (end === "incomplete") {
+    ev("response.incomplete", { response: { ...response(model, "incomplete", output, usage), incomplete_details: { reason: "max_output_tokens" } } });
+  } else {
+    ev("response.completed", { response: response(model, "completed", output, usage) });
+  }
   return sse(events, sent.stall, sent.cut, limits(vendor));
 }
 

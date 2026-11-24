@@ -3,7 +3,7 @@ import { Anthropic } from "./Anthropic.ts";
 import { OpenAI } from "./OpenAI.ts";
 import { ChatGPT } from "./ChatGPT.ts";
 import { Limit } from "./Limit.ts";
-import { live_push, type At } from "./View.ts";
+import { live_push, type At, type Live } from "./View.ts";
 import { Machine, type Spec } from "./Machine.ts";
 import * as config from "./Config.ts";
 import { err_why } from "./Err.ts";
@@ -194,7 +194,7 @@ export namespace Agent {
       run.limit.n = run.ask.limits ?? 0;
       for (let k = 0; !signal.aborted; ) {
         await Agent.give_way(seat, signal);
-        const seen: Entry[] = [];
+        const seen: Live[] = [];
         const token = await Agent.unless_stopped(Agent.token(wire, key, refused), signal);
         if (token === null) {
           return Agent.fail("stopped", seen);
@@ -378,7 +378,7 @@ export namespace Agent {
     }
   }
 
-  export async function request<S, E>(wire: Wire<S, E>, run: Doing, key: string, body: unknown, items: Item[], seen: Entry[]): Promise<{ res: Response | null; step: Step }> {
+  export async function request<S, E>(wire: Wire<S, E>, run: Doing, key: string, body: unknown, items: Item[], seen: Live[]): Promise<{ res: Response | null; step: Step }> {
     const flight = await AskAI.single_flight(run.ask);
     if (run.abort.signal.aborted) {
       flight.end();
@@ -387,7 +387,7 @@ export namespace Agent {
     return Agent.send(wire, run, key, body, items, flight, seen);
   }
 
-  export async function send<S, E>(wire: Wire<S, E>, run: Doing, key: string, body: unknown, items: Item[], flight: Flight, seen: Entry[]): Promise<{ res: Response | null; step: Step }> {
+  export async function send<S, E>(wire: Wire<S, E>, run: Doing, key: string, body: unknown, items: Item[], flight: Flight, seen: Live[]): Promise<{ res: Response | null; step: Step }> {
     const idle = new AbortController();
     const timer = setTimeout(() => idle.abort(new Error("no word from the API in " + wire.idle / 1e3 + " s")), wire.idle);
     const st = wire.start(run.ask, items);
@@ -444,7 +444,7 @@ export namespace Agent {
     return should === "true" || (should !== "false" && busy);
   }
 
-  export async function stream<S, E>(wire: Wire<S, E>, run: Doing, body: ReadableStream<Uint8Array>, timer: Timer, seen: Entry[], st: S, begun: () => void): Promise<Step> {
+  export async function stream<S, E>(wire: Wire<S, E>, run: Doing, body: ReadableStream<Uint8Array>, timer: Timer, seen: Live[], st: S, begun: () => void): Promise<Step> {
     const ask = run.ask;
     const on: Emit = (kind, text, fresh, at) => {
       if (!run.abort.signal.aborted) {
@@ -461,7 +461,7 @@ export namespace Agent {
         }
         if (wire.read(st, ev, on)) {
           const step = wire.step(st, ask);
-          return step.stop === "fail" || step.stop === "busy" || step.stop === "limit" ? Agent.fail(step.why, seen, step.stop) : step;
+          return step.stop === "fail" || step.stop === "busy" || step.stop === "limit" ? Agent.fail(step.why, seen, step.stop, step.entries) : step;
         }
       }
       return Agent.fail("the stream ended early", seen, "busy");
@@ -476,9 +476,14 @@ export namespace Agent {
     return line.length > 300 ? line.slice(0, 300) + "…" : line;
   }
 
-  export function fail(why: string, seen: Entry[], stop: Step["stop"] = "lost"): Step {
+  // what streamed before it failed, cut off; a hosted call it streamed
+  // that its end still holds, ended, as that tells it (#205)
+  export function fail(why: string, seen: Live[], stop: Step["stop"] = "lost", ended: Entry[] = []): Step {
     const mark = "\n[cut off: " + (stop === "busy" || stop === "limit" ? BUSY : why).slice(0, 300) + "]";
-    const entries = seen.filter((e) => e.text.trim()).map((e) => ({ kind: e.kind, text: e.text.trim() + mark }));
+    const entries = seen.flatMap((e): Entry[] => {
+      const done = e.at === undefined ? [] : ended.filter((x) => x.of === e.at?.item);
+      return done.length > 0 ? done : e.text.trim() ? [{ kind: e.kind, text: e.text.trim() + mark }] : [];
+    });
     return { out: [], uses: [], entries, stop, why, note: "" };
   }
 

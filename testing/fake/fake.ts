@@ -10,7 +10,8 @@ fake tool NAME 'JSON' [...]    the next call asks for these tools; --pace 2s: ea
                                --think "t": after 5 s of thinking first, its text "t" ("" for none);
                                on openai-api and openai-sub, web_search 'ACTION' is OpenAI's own search
                                ({"type":"search","query":...}), 1 s long, then the answer "ok"; its JSON's
-                               "status" ("failed") and "quiet": true (no per-call events) are the fake's
+                               "status" ("failed"), "quiet": true (no per-call events) and "end" ("failed",
+                               "incomplete": how the response ends after it) are the fake's
 fake error KIND [--reset 5m]   the next call fails: prompt-too-long, overloaded, rate-limit, usage-limit, auth-expired
 fake stall 60s | fake cut      the next stream hangs that long, or drops halfway
 fake log | fake last [--json]  what the app sent: every call, or the last one (--json: its headers and body)
