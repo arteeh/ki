@@ -380,7 +380,7 @@ export namespace ClaudeSub {
 
   export function off(ask: Ask, off: Off, acted: boolean): Partial<End> {
     if (ask.patient !== true) {
-      console.error(ask.model + ": " + off.why.slice(0, 300));
+      console.error(ask.model + ": " + off.say.slice(0, 300));
     }
     return { text: off.say, why: off.why, stop: "down", off: true, acted, until: off.until, limits: off.limits };
   }

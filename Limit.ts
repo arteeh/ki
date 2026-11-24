@@ -17,6 +17,9 @@ export type Off = { why: string; say: string; until?: number; limits: number };
 const LONG  = 60e3;
 export const LIMIT = 1800e3;
 
+// the most of a limit's reason a note shows
+const REASON = 200;
+
 const POLL = 300e3;
 
 const STAGGER      = 60e3;
@@ -42,7 +45,7 @@ export namespace Limit {
     if (Limit.ends(l.ask, acted, ms)) {
       return Limit.off(why, told, l.ask, l.n);
     }
-    await Limit.park(l, ms, known);
+    await Limit.park(l, ms, known, Limit.reason(why));
     return null;
   }
 
@@ -52,7 +55,7 @@ export namespace Limit {
       if (Limit.ends(l.ask, acted, ms)) {
         return Limit.off("usage limit", until, l.ask, l.n);
       }
-      await Limit.park(l, ms, true);
+      await Limit.park(l, ms, true, undefined);
     }
     return null;
   }
@@ -64,8 +67,15 @@ export namespace Limit {
     return { ms, known: left > 0 && ms === left };
   }
 
-  export function ends(ask: { fallback?: boolean; repick?: unknown; no_wait?: boolean }, acted: boolean, ms: number): boolean {
-    return ms >= LONG && (ask.no_wait === true || ((ask.fallback === true || ask.repick !== undefined) && !acted));
+  export function ends(ask: { fallback?: boolean; repick?: unknown; no_wait?: boolean; fresh?: boolean }, acted: boolean, ms: number): boolean {
+    return ms >= LONG && (ask.no_wait === true || ((ask.fallback === true || ask.repick !== undefined || ask.fresh === true) && !acted));
+  }
+
+  // the reason a limit came with, for its note (#201): one line, no HTTP
+  // status; none for Ki's own word for it
+  export function reason(why: string | undefined): string | undefined {
+    const text = (why ?? "").replace(/^HTTP \d+: /, "").replace(/\s+/g, " ").trim();
+    return text === "" || text === "usage limit" ? undefined : text.length > REASON ? text.slice(0, REASON) + "…" : text;
   }
 
   export function answering(turn: () => { queued: boolean; busy: boolean }): void {
@@ -73,17 +83,17 @@ export namespace Limit {
   }
 
   export function off(why: string, until: number | null, ask: { vendor: Vendor }, n: number): Off {
-    const say = limit_note(ask.vendor, "resets", until);
-    return { why: why + "; " + say, say, until: until ?? undefined, limits: n };
+    const say = limit_note({ vendor: ask.vendor, until, why: Limit.reason(why) }, "resets");
+    return { why, say, until: until ?? undefined, limits: n };
   }
 
-  export async function park(l: Limit, ms: number, known: boolean): Promise<void> {
+  export async function park(l: Limit, ms: number, known: boolean, why: string | undefined): Promise<void> {
     const wake = new AbortController();
     l.poke = () => wake.abort();
     const parked = ms >= LONG;
     const vendor = l.ask.vendor;
     if (parked) {
-      l.on({ $: "Limit", limit: { until: Date.now() + ms, known, vendor } });
+      l.on({ $: "Limit", limit: { until: Date.now() + ms, known, vendor, why } });
     }
     if (!parked) {
       Limit.busy(l.on, ms);

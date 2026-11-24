@@ -849,8 +849,9 @@ export function view_tail(v: View): Row[] {
     const sub = view_sub(v);
     const queued = (sub?.queue ?? []).flatMap((text) => waits("user", text, true));
     const last = v.page.log?.at(-1);
-    const idle = sub !== undefined && v.page.live.length === 0 && (last?.kind !== "tool" || last.echo !== undefined) && sub.doing !== "usage limit";
-    return [...thought, ...grouped(live_rows(page, sub !== undefined)), ...(idle ? [WAITING] : []), ...queued];
+    const limit = sub?.limit ?? null;
+    const idle = sub !== undefined && v.page.live.length === 0 && (last?.kind !== "tool" || last.echo !== undefined) && limit === null;
+    return [...thought, ...grouped(live_rows(page, sub !== undefined)), ...(idle ? [WAITING] : []), ...(limit === null ? [] : [Cap(limit_show(limit))]), ...queued];
   }
   const thought = v.thinking === false && (v.live.some((_, k) => thinks(v.live, k)) || (v.live.length === 0 && v.busy && v.wait === "" && thought_last(v))) ? [THINKING] : [];
   const rows = [...thought, ...grouped(live_rows(v.live.filter((l) => v.thinking !== false || l.kind !== "mind"), v.busy && v.wait === ""))];
@@ -879,13 +880,15 @@ function sums_show(sums: Sums | null, again: Again | null, now = Date.now()): st
 }
 
 function limit_show(limit: Parked, now = Date.now()): string {
-  return limit_note(limit.vendor, limit.known ? "resumes" : "tries again", limit.until, now);
+  return limit_note(limit, limit.known ? "resumes" : "tries again", now);
 }
 
 // the one usage-limit note: the parked wait's row, a call ended by one
-// (Limit.off), a subagent's in its spawner's turn (#170)
-export function limit_note(vendor: Vendor, does: string, until: number | null, now = Date.now(), since: number | null = null): string {
-  return "Usage limit on " + vendor + (since === null ? "" : " since " + clock(since, now)) + ", " + (until === null ? "reset time unknown" : does + " at " + clock(until, now));
+// (Limit.off), a subagent's in its spawner's turn (#170); with the reason
+// its vendor gave (#201)
+export function limit_note(limit: { vendor: Vendor; until: number | null; why?: string }, does: string, now = Date.now(), since: number | null = null): string {
+  const { vendor, until, why } = limit;
+  return "Usage limit on " + vendor + (since === null ? "" : " since " + clock(since, now)) + ", " + (until === null ? "reset time unknown" : does + " at " + clock(until, now)) + (why === undefined ? "" : " (" + why + ")");
 }
 
 function clock(at: number, now = Date.now()): string {

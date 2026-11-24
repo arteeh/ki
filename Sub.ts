@@ -1,4 +1,4 @@
-import type { Block, End, Say } from "./AskAI.ts";
+import type { Block, End, Parked, Say } from "./AskAI.ts";
 import * as config from "./Config.ts";
 import { list as items, rec, text_of } from "./Json.ts";
 import * as Names from "./Names.ts";
@@ -16,7 +16,8 @@ export type Spawn = { task: string; role: Role; memory: boolean; mcp: boolean };
 
 // doing: what it does now, since at (a tool's name, thinking, a usage limit)
 // used: the tokens of its last request, when its log had used_at bytes of
-// the bytes it has now
+// the bytes it has now; told: its spawner knows of the usage limit it waits
+// for, until it goes on (#201)
 export type Sub<M> = {
   name    : string;
   role    : Role;
@@ -31,6 +32,7 @@ export type Sub<M> = {
   used    : number | null;
   used_at : number;
   bytes   : number;
+  told    : boolean;
 };
 
 // how it runs or ran: its last pick, else what its spawn recorded
@@ -38,8 +40,8 @@ export type How = { model: string; effort: string; pick: Pick | null };
 
 // a subagent's row in the chat list
 // queue: the messages it hasn't taken yet; sent: its log's ones it took
-// but hasn't answered
-export type Row = How & { name: string; face: string; task: string; meter: Talk | null; doing: string; at: number; queue: string[]; sent: number[] };
+// but hasn't answered; limit: the usage limit it waits for, for its page
+export type Row = How & { name: string; face: string; task: string; meter: Talk | null; doing: string; at: number; queue: string[]; sent: number[]; limit: Parked | null };
 
 const NOTE = "subagent";
 const ON   = " on ";
@@ -122,9 +124,10 @@ export namespace Sub {
   }
 
   // what its report gets from a call: its text, or why it failed, a prompt
-  // too long as itself (#88, #89)
+  // too long as itself (#88, #89), a usage limit with its model (#201)
   export function ended<M>(sub: Sub<M>, end: End): void {
-    sub.replies.push(end.ok ? end.text : sub.why ?? "failed: " + (end.long === true ? end.why ?? end.text : end.text));
+    const on = end.limits === undefined || sub.pick === null ? "" : " on " + sub.pick.model;
+    sub.replies.push(end.ok ? end.text : sub.why ?? "failed" + on + ": " + (end.long === true ? end.why ?? end.text : end.text));
   }
 
   export function report<M>(sub: Sub<M>): string {
@@ -147,6 +150,7 @@ export namespace Sub {
       at     : sub.at,
       queue  : sub.run.queue.map(({ q }) => (q.text.length > QUEUED_SHOWN ? q.text.slice(0, QUEUED_SHOWN) + "…" : q.text)),
       sent,
+      limit  : sub.run.limit,
     };
   }
 

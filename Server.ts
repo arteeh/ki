@@ -645,11 +645,11 @@ export namespace Chat {
     const wake = new AbortController();
     chat.resume = { wake, goal };
     chat.limits = { vendor, n };
-    chat.main.limit = { until, known, vendor };
+    chat.main.limit = { until, known, vendor, why: Limit.reason(end.why) };
     void Limit.wait(vendor, ms, wake.signal).then(() => Chat.go_on(chat, wake, goal));
     Chat.change(chat);
     if (first) {
-      Chat.ring(chat, limit_note(vendor, known ? "resumes" : "tries again", until), true);
+      Chat.ring(chat, limit_note(chat.main.limit, known ? "resumes" : "tries again"), true);
     }
   }
 
@@ -988,7 +988,7 @@ export namespace Chat {
   export function sub_doing(sub: Sub<Msg>, now = Date.now()): string {
     const limit = sub.run.limit;
     if (limit !== null) {
-      const note = limit_note(limit.vendor, "resets", limit.known ? limit.until : null, now, sub.doing === "usage limit" ? sub.at : now);
+      const note = limit_note({ ...limit, until: limit.known ? limit.until : null }, "resets", now, sub.doing === "usage limit" ? sub.at : now);
       return note[0].toLowerCase() + note.slice(1);
     }
     const min = Math.floor((now - sub.at) / 60e3);
@@ -1027,7 +1027,7 @@ export namespace Chat {
     // a name no other agent's subagent has, now or before: it keys the
     // seat at the tools, the jobs' reports and the scratch folder
     const it = name ?? Memory.agent_new(chat.mem, (n) => [...Main.chats.values()].some((c) => c.subs.has(n) || Memory.agent(c.mem, n) !== null));
-    const sub: Sub<Msg> = { name: it, role, pick: Memory.agent_pick(chat.mem, it), task, view, replies: [], why: null, run: Run.make<Say, Msg>(it, Chat.sub_kind(chat, () => sub)), doing: "starting", at: Date.now(), used: null, used_at: 0, bytes: 0 };
+    const sub: Sub<Msg> = { name: it, role, pick: Memory.agent_pick(chat.mem, it), task, view, replies: [], why: null, run: Run.make<Say, Msg>(it, Chat.sub_kind(chat, () => sub)), doing: "starting", at: Date.now(), used: null, used_at: 0, bytes: 0, told: false };
     sub.bytes = (Memory.agent(chat.mem, it) ?? []).reduce((n, root) => n + Chat.sub_bytes(root), 0);
     chat.subs.set(it, sub);
     // a job's report reaches it while it runs, else its spawner
@@ -1151,7 +1151,8 @@ export namespace Chat {
     };
     const pick = Chat.sub_pick(chat, sub);
     Chat.sub_picked(chat, sub, pick);
-    return { ...Pick.ask(pick), system: Prompts.prompt("sub"), own, blocks, searches: SEARCHES, server: Tools.at(chat.tools, sub.name), agent: true, who: sub.name, used, minds: config.THINKING };
+    const fresh = !(Memory.agent(chat.mem, sub.name) ?? []).some((root) => root.kind === "tool" || root.kind === "reply");
+    return { ...Pick.ask(pick), system: Prompts.prompt("sub"), own, blocks, searches: SEARCHES, server: Tools.at(chat.tools, sub.name), agent: true, who: sub.name, used, minds: config.THINKING, fresh };
   }
 
   export function sub_put(chat: Chat, run: Talk, msg: Log, sent: boolean): Msg {
@@ -1170,6 +1171,14 @@ export namespace Chat {
     const run = sub.run;
     if (ev.$ === "Run") {
       Chat.sub_picked(chat, sub, ev.run);
+    }
+    if (ev.$ === "Limit" && ev.limit !== null && run.limit === null && !sub.told) {
+      sub.told = true;
+      const note = limit_note({ ...ev.limit, until: ev.limit.known ? ev.limit.until : null }, "resets");
+      Chat.report(chat, "[" + sub.name + "] Waiting on " + (sub.pick?.model ?? "its model") + ": " + note + ". It goes on by itself then; stop it to end it now.", true);
+    }
+    if (ev.$ === "Delta" || (ev.$ === "Entry" && ev.kind !== "mind")) {
+      sub.told = false;
     }
     Chat.on(chat, run, ev);
     const call = [...run.calls.values()].at(-1);

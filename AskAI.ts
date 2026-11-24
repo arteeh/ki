@@ -38,6 +38,9 @@ export type Ask = Pick & {
   agent?    : boolean;
   fallback? : boolean;
   no_wait?  : boolean;
+  // a subagent that has done nothing yet: a long usage limit ends its call
+  // while the call does nothing, so its spawner can try another model (#201)
+  fresh?    : boolean;
   talk?     : boolean;
   repick?   : () => Pick;
   used?     : (tokens: number) => void;
@@ -58,7 +61,8 @@ export type Flight = { begun: () => void; end: () => void };
 // them for a fresh start of the call (a fallback, a new Claude Code)
 export type Steer = { pending: () => boolean; take: () => Promise<Said[]>; taken: Say[] };
 
-export type Parked = { until: number; known: boolean; vendor: Vendor };
+// why: the reason the vendor or Claude Code gave, if any (#201)
+export type Parked = { until: number; known: boolean; vendor: Vendor; why?: string };
 
 export type Again = { why: string; until: number; limit: boolean };
 
