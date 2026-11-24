@@ -60,9 +60,27 @@ const MODELS: Record<Vendor, Model[]> = {
 
 const SPEEDS = ["slow", "fast", "ultrafast"];
 
+// every model's efforts, from least to most thought: a profile's fallback
+// without the picked one goes on at its closest (#219)
+const LEVELS = ["none", "low", "medium", "high", "xhigh", "max"];
+
 // the models Ki dropped, each with the one in its place (#200): a setting
 // that still names one is refused with that name, never moved onto it
 const REPLACED: Record<string, string> = { "gpt-6-astra": "gpt-6.2-astra", "gpt-6.1-sol": "gpt-6.2-sol" };
+
+// a tie goes to the lesser; an effort or a model off LEVELS, to its default
+function closest(model: Model, effort: string): string {
+  const at = LEVELS.indexOf(effort);
+  const known = model.efforts.filter((e) => LEVELS.includes(e));
+  if (Pick.offers(model, effort)) {
+    return effort;
+  }
+  if (at === -1 || known.length === 0) {
+    return model.effort;
+  }
+  const off = (e: string) => Math.abs(LEVELS.indexOf(e) - at);
+  return known.reduce((best, e) => (off(e) < off(best) ? e : best));
+}
 
 export const LABELS = [...new Set(Object.values(MODELS).flat().map((m) => m.label))];
 
@@ -155,7 +173,7 @@ export namespace Pick {
     const own = { vendor: run.vendor, model: run.model, effort: run.effort, speed: run.speed };
     const list = falls.map((f) => {
       const on = Pick.on(own, f.vendor, f.model);
-      return Pick.ask({ ...on, effort: f.effort ?? on.effort, speed: f.speed ?? on.speed });
+      return Pick.ask({ ...on, effort: f.effort ?? closest(f.model, own.effort), speed: f.speed ?? on.speed });
     });
     return [own, ...list].filter((p, k, all) => all.findIndex((q) => q.vendor === p.vendor && q.model === p.model) === k);
   }
