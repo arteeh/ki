@@ -109,6 +109,10 @@ export type Memory = Logs & Chosen & Unlogged & Tree & Hooks;
 
 const NODE  = 512;
 const PART_BEGINS = 150;
+
+// a line after a message's first that reads as a line of the view or a
+// zoom ("12|", "8+4|", "12 · 2026-11-24 10:47 +01:00|")
+const LISTED = /\n\s*\d+(?:\+\d+)?(?: · [^|\n]*)?\|/;
 export const JOBS = 64;
 
 const LOGGED = 60e3;
@@ -762,7 +766,7 @@ export namespace Memory {
   }
 
   export async function build(mem: Memory, l: number, i: number, text: string): Promise<void> {
-    const task = { text: Memory.task(l, i) + text + "\n</input>", mark: false };
+    const task = { text: Memory.task(mem, l, i) + text + "\n</input>", mark: false };
     const upto = Math.min(Memory.ctx(l, i), Memory.first(mem, 0, Memory.side(mem, l, i)));
     const blocks = [...Memory.view(mem, upto, Memory.last(mem, Memory.before(mem.seen.parts, upto), config.COMPACTOR_CONTEXT)), task];
     const { lines, end } = await Memory.ask_till_fits(mem, l, i, blocks);
@@ -855,10 +859,14 @@ export namespace Memory {
     return call.done.finally(() => mem.calls.delete(call));
   }
 
-  export function task(l: number, i: number): string {
+  // the lines merged named as <chat> shows them
+  export function task(mem: Memory, l: number, i: number): string {
     const [a, z] = Memory.span({ l, i });
-    const n = 2 ** l / 2;
-    const vars = { a: a + "+" + n, b: a + n + "+" + n, id: String(a), end: String(z), limit: String(NODE), ruler: NODE_RULER };
+    const [x, y] = Memory.halves({ l, i }).map((half) => {
+      const node = half.l === 0 ? Memory.node(mem, half) : null;
+      return node !== null && Memory.is_whole(mem, half.i, node) ? String(half.i) : Memory.ref(half);
+    });
+    const vars = { a: x, b: y, id: String(a), end: String(z), limit: String(NODE), ruler: NODE_RULER };
     return Prompts.prompt(l === 0 ? "leaf" : "merge", vars) + "\n";
   }
 
@@ -1044,16 +1052,19 @@ export namespace Memory {
 
   // a line of the view from its node: a message that is its own line,
   // nothing left out (no image, page or line of its own), is shown word
-  // for word under its bare id, as zooming it would add nothing (#207)
+  // for word under its bare id, as zooming it would add nothing (#207),
+  // unless a line of it would read as a line of the view; a </chat> in it
+  // never ends the view's
   export function entry(mem: Memory, part: Part, node: string, at = ""): string {
-    return part.l === 0 && Memory.is_whole(mem, part.i, node) ? part.i + at + "|" + node : Memory.line(part, node, at);
+    const line = part.l === 0 && Memory.is_whole(mem, part.i, node) ? part.i + at + "|" + node : Memory.line(part, node, at);
+    return line.replace(/<\/chat>/gi, "<\\/chat>");
   }
 
   export function is_whole(mem: Memory, i: number, node: string): boolean {
     let whole = mem.whole.get(i);
     if (whole === undefined) {
       const root = Memory.bytes(node) <= NODE ? Memory.message(mem, i) : null;
-      whole = root !== null && Memory.alone(root) && root.line === undefined && node === Memory.show(root);
+      whole = root !== null && Memory.alone(root) && root.line === undefined && node === Memory.show(root) && !LISTED.test(node);
       mem.whole.set(i, whole);
     }
     return whole;

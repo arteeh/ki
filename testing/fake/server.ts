@@ -24,7 +24,7 @@ type Sent = { blocks: Array<{ text: string } | { id: string; name: string; json:
 export const CONTROL = 9999;
 
 // the compactor's task, as Memory.ts words it, past its view
-const TASK = /^Compaction: (?:compress message \d+ |merge lines \d+\+\d+ and \d+\+\d+, )/m;
+const TASK = /^Compaction: (?:compress message \d+ |merge lines \d+(?:\+\d+)? and \d+(?:\+\d+)?, )/m;
 
 const REMINDER = /<system-reminder>[\s\S]*?<\/system-reminder>/g;
 
