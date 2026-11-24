@@ -180,14 +180,14 @@ export namespace Tools {
     return Tools.skills_found(tools).filter(({ skill }) => skill.user).map(({ skill }) => ({ name: skill.name, about: skill.description, ...(skill.hint === undefined ? {} : { hint: skill.hint }) }));
   }
 
-  // a skill the user starts: its SKILL.md, read from its device
-  export async function skill_read(tools: Tools, name: string, signal: AbortSignal): Promise<{ device: string; file: string; text: string } | null> {
+  // a skill the user starts: its SKILL.md, read from its device, or why not
+  export async function skill_read(tools: Tools, name: string, signal: AbortSignal): Promise<{ device: string; file: string; text: string } | string> {
     const found = Tools.skills_found(tools).find(({ skill }) => skill.user && skill.name === name);
     if (found === undefined) {
-      return null;
+      return "No skill " + name + " was found on the devices open now";
     }
     const out = await Tools.job(tools, found.device, { name: "skill_file", input: { file: found.skill.file }, cwd: "main" }, signal, crypto.randomUUID());
-    return out.fail ? null : { device: found.device, file: found.skill.file, text: out.text };
+    return out.fail ? "The skill " + name + " couldn't be read: " + out.text.replace(/\.$/, "") : { device: found.device, file: found.skill.file, text: out.text };
   }
 
   // a device's skills as it said them; any it got wrong left out

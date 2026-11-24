@@ -518,8 +518,9 @@ function typed(): void {
 
 // the / list over the composer (#203): at, the entry the arrow keys are
 // on, for the text typed; shut, the text Escape closed it on, until the
-// text changes
-const SLASH = { at: 0, text: "", shut: "" };
+// text changes; picked, the skill the text's first word last matched,
+// kept when the list loses it
+const SLASH: { at: number; text: string; shut: string; picked?: string } = { at: 0, text: "", shut: "" };
 
 function slash_items(): View.Slash[] {
   const text = Box.box_text();
@@ -531,19 +532,26 @@ function slash_draw(): void {
   if (text !== SLASH.text) {
     [SLASH.at, SLASH.text] = [0, text];
   }
+  const word = /^\/(\S+)(?:\s|$)/.exec(text)?.[1];
+  SLASH.picked = word !== undefined && (word === SLASH.picked || v.skills?.some((s) => s.name === word) === true) ? word : undefined;
   const items = slash_items();
   SLASH.at = Math.min(SLASH.at, Math.max(0, items.length - 1));
   const el = $("#slash");
   el.hidden = items.length === 0;
-  markup(el, items.map((s, k) => Html.slash_html(s, k === SLASH.at)));
+  markup(el, items.map((s, k) => Html.slash_html(s, k, k === SLASH.at)));
+  if (items.length === 0) {
+    BOX.removeAttribute("aria-activedescendant");
+  } else {
+    BOX.setAttribute("aria-activedescendant", Html.slash_id(SLASH.at));
+  }
   el.querySelector(".on")?.scrollIntoView({ block: "nearest" });
 }
 
 // the keys the open list takes: Up and Down move, Enter (where it sends)
-// and Tab pick, Escape closes it
+// and Tab pick, Escape closes it; none of a composition's
 function slash_key(ev: KeyboardEvent): boolean {
   const items = slash_items();
-  if (items.length === 0 || ev.isComposing) {
+  if (items.length === 0 || ev.isComposing || ev.keyCode === 229) {
     return false;
   }
   if (ev.key === "ArrowDown" || ev.key === "ArrowUp") {
@@ -576,8 +584,7 @@ function submit(): void {
     return;
   }
   P.after = false;
-  const text = Box.box_text().trim();
-  act({ $: "Send", text });
+  act({ $: "Send", text: Box.box_text(), ...(SLASH.picked === undefined ? {} : { picked: SLASH.picked }) });
   Box.box_set("");
 }
 

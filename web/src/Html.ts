@@ -127,9 +127,13 @@ const BLOCKS = new WeakMap<Md.Block, { html: string; names: string }>();
 
 // one entry of the composer's / list (#203): its name, its argument-hint
 // dimmed, what it does cut to a line
-export function slash_html(s: View.Slash, on: boolean): string {
+export function slash_id(k: number): string {
+  return "slash-" + k;
+}
+
+export function slash_html(s: View.Slash, k: number, on: boolean): string {
   const hint = s.hint === undefined ? "" : `<span class="hint">${esc(s.hint)}</span>`;
-  return `<button type="button" role="option" class="${on ? "on" : ""}" aria-selected="${String(on)}" data-name="${esc(s.name)}"><b>/${esc(s.name)}</b>${hint}<span class="about">${esc(s.about.replace(/\s+/g, " "))}</span></button>`;
+  return `<button type="button" role="option" id="${slash_id(k)}" tabindex="-1" class="${on ? "on" : ""}" aria-selected="${String(on)}" data-name="${esc(s.name)}"><b>/${esc(s.name)}</b>${hint}<span class="about">${esc(s.about.replace(/\s+/g, " "))}</span></button>`;
 }
 
 // the first word that started a skill or set the goal, in the accent (#203)

@@ -176,14 +176,16 @@ export type Server =
   | { $: "jobs"; ids: string[] }
   | { $: "job"; id: string; job: Job };
 
-export type Sent = { text: string; images?: Blob[] };
+// picked: the skill the composer's first word last matched in the / list,
+// though the list may have lost it since (#203)
+export type Sent = { text: string; images?: Blob[]; picked?: string };
 
 export type Answer = { error?: string; status?: number; text?: string; going?: boolean };
 type Upload = BodyInit | AsyncIterable<string>;
 type Body   = () => Upload | Promise<Upload>;
 
 export type Client =
-  | { $: "say"; sizes: number[]; body: Body; agent?: string; skill?: string }
+  | { $: "say"; sizes: number[]; body: Body; agent?: string; cmd?: string }
   | { $: "import"; body: Body; agent: string }
   | { $: "voice"; type: string; body: Body }
   | { $: "stop" }
@@ -625,13 +627,15 @@ export function view_act(v: View, act: Act): Client[] {
       if (text === "" && images.length === 0) {
         return view_stoppable(v) ? [{ $: "stop" }] : [];
       }
-      // any other /word is text; a skill the list has, the server's to
-      // start, or to say it found none (#203)
-      const word = /^\/(\S+)(?:\s|$)/.exec(text);
+      // only a / the message starts with, as typed: any other /word is
+      // text; a skill the list has or had picked, the server's to start, or
+      // to say it found none (#203)
+      const word = act.text.startsWith("/") ? /^\/(\S+)(?:\s|$)/.exec(text) : null;
       const command = COMMANDS.find((c) => c.name === word?.[1]);
-      const skill = command === undefined ? v.skills?.find((s) => s.name === word?.[1])?.name : undefined;
+      const skill = command === undefined && word !== null && (word[1] === act.picked || v.skills?.some((s) => s.name === word[1]) === true) ? word[1] : undefined;
+      const cmd = command?.name ?? skill;
       const blob = new Blob([...images, text]);
-      const say: Client = { $: "say", sizes: images.map((b) => b.size), body: () => blob, ...(skill === undefined ? {} : { skill }) };
+      const say: Client = { $: "say", sizes: images.map((b) => b.size), body: () => blob, ...(cmd === undefined ? {} : { cmd }) };
       const sent = command === undefined || word === null ? [say] : command.act(text.slice(word[0].length).trim(), say);
       if (typeof sent === "string") {
         v.notes.push(sent);

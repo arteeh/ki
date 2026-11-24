@@ -81,8 +81,10 @@ type Parts = {
   batch : Batch | null;
 };
 
+// says: the user's messages, each taken after the one before it (#203)
 type Doing = {
   acts  : Map<string, Promise<Answer>>;
+  says  : Promise<unknown>;
   writes: Promise<unknown>;
   held  : Array<() => void> | null;
   after : Promise<void>;
@@ -255,7 +257,7 @@ export namespace Chat {
     const pick = Pick.load(mem.pick, config.OFFER, config.PICK);
     const chat: Chat = {
       id, who: id, mem, tools, pick, socks: new Set(), acts: new Map(), main, model: "", check: null, asked: false,
-      eye: { parts: [], from: 0 }, after: Promise.resolve(), batch: null, writes: Promise.resolve(), held: null, back: -1, sums: null, resume: null, limits: null, bell: undefined, fresh: true, told: false, gist: -1, stopped: false, subs: new Map(), gone: new Map(), leader: null,
+      eye: { parts: [], from: 0 }, after: Promise.resolve(), batch: null, says: Promise.resolve(), writes: Promise.resolve(), held: null, back: -1, sums: null, resume: null, limits: null, bell: undefined, fresh: true, told: false, gist: -1, stopped: false, subs: new Map(), gone: new Map(), leader: null,
     };
     const seat: Seat = { mem, note: (text) => Chat.note(chat, text), report: (text) => Chat.report(chat, text, true), timed: () => Chat.timed(chat), message: (to, text) => Chat.message(chat, to, text), subs: Chat.subs_of(chat) };
     tools.seats.set(id, seat);
@@ -320,8 +322,16 @@ export namespace Chat {
     return { ...Pick.ask(chat.pick), ...system, searches: 0, server: "" };
   }
 
-  // skill: the one the page's list had the message start (#203)
-  export async function say(chat: Chat, id: string, sizes: number[], body: Body, skill: string | null): Promise<Answer> {
+  // in the order they came, a message whose skill is read from its device
+  // no later than the next; cmd: the command or skill the page took its
+  // first word for (#203)
+  export function say(chat: Chat, id: string, sizes: number[], body: Body, cmd: string | null): Promise<Answer> {
+    const run = chat.says.then(() => Chat.say_one(chat, id, sizes, body, cmd));
+    chat.says = run.catch(() => {});
+    return run;
+  }
+
+  export async function say_one(chat: Chat, id: string, sizes: number[], body: Body, cmd: string | null): Promise<Answer> {
     if (chat.main.queue.some((x) => x.q.act === id)) {
       return {};
     }
@@ -340,25 +350,27 @@ export namespace Chat {
     }
     const text = (await Chat.read(body, at, body.size - at)).toString("utf8");
     const pics = [...images, ...await Chat.pictured(chat, text, images)];
-    const led = await Chat.led(chat, text, skill);
+    const led = await Chat.led(chat, text, cmd);
     const why = await Run.take(chat.main, { kind: "user", text: led.text, images: pics, act: id, ...(led.lead === undefined ? {} : { lead: led.lead }) });
     return why === null ? {} : { error: why };
   }
 
   // a message whose first word starts a skill (#203) goes with that
-  // SKILL.md before it, as the agent reads it; one the devices no longer
-  // have, as written with a note; /goal's as written, its word marked
-  export async function led(chat: Chat, text: string, skill: string | null): Promise<{ text: string; lead?: number }> {
+  // SKILL.md before it, the one the agent's Skills block then names; one
+  // not found or read, as written with a note; /goal's as written, its
+  // word marked
+  export async function led(chat: Chat, text: string, cmd: string | null): Promise<{ text: string; lead?: number }> {
     const name = /^\/(\S+)(?:\s|$)/.exec(text)?.[1];
+    if (name === undefined || name !== cmd) {
+      return { text };
+    }
     if (name === "goal") {
       return { text, lead: 0 };
     }
-    if (name === undefined || (name !== skill && !Tools.slashes(chat.tools).some((s) => s.name === name))) {
-      return { text };
-    }
+    await Tools.look(chat.tools);
     const found = await Tools.skill_read(chat.tools, name, AbortSignal.timeout(SKILL_WAIT));
-    if (found === null) {
-      Chat.note(chat, "No skill " + name + " was found on the devices open now, so the message went as written.");
+    if (typeof found === "string") {
+      Chat.note(chat, found + ", so the message went as written.");
       return { text };
     }
     const head = Prompts.prompt("skill-used", { name, device: found.device, file: found.file }) + "\n\n" + found.text.trim() + "\n\n";
@@ -1756,7 +1768,7 @@ export namespace Chat {
     if (m === null) {
       return "";
     }
-    const said = m.lead === undefined ? m.text : Memory.say(chat.mem, ...Memory.pages_of(chat.mem, m.i)).text.slice(m.lead);
+    const said = m.lead === undefined ? m.text : Memory.joined(chat.mem, ...Memory.pages_of(chat.mem, m.i)).slice(m.lead);
     const text = Memory.flat(said).replace(/[*_`#>]+/g, "").trim();
     return (m.kind === "user" ? "You: " : "") + (text.length > LAST ? text.slice(0, LAST) + "…" : text);
   }
@@ -1991,7 +2003,7 @@ export namespace Chat {
           if (typeof msg.sizes !== "string") {
             throw new Error("A say has no sizes.");
           }
-          return await Chat.say(chat, id, msg.sizes.split(",").filter(Boolean).map(Number), body, typeof msg.skill === "string" ? msg.skill : null);
+          return await Chat.say(chat, id, msg.sizes.split(",").filter(Boolean).map(Number), body, typeof msg.cmd === "string" ? msg.cmd : null);
         }
         case "import": {
           return await Chat.writing(chat, () => Chat.ingest(chat, id, body));

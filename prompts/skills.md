@@ -1,1 +1,1 @@
-Skills on the devices open now, by device, each with its SKILL.md: when a task matches one's description, read that SKILL.md first (read, on its device), then follow it; its other files are next to it.
+Skills on the devices open now, each with its device and its SKILL.md: when a task matches one's description, read that SKILL.md first (read, on its device), then follow it; its other files are next to it.

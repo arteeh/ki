@@ -449,8 +449,12 @@ export namespace Memory {
 
   export function say(mem: Memory, a: number, b: number): Say {
     const ids = Array.from({ length: b - a }, (_, k) => a + k);
-    const text = ids.map((id) => Memory.at(mem, id).text).join("");
-    return { text, imgs: ids.flatMap((id) => Memory.images(mem, id)) };
+    return { text: Memory.joined(mem, a, b), imgs: ids.flatMap((id) => Memory.images(mem, id)) };
+  }
+
+  // the text of pages [a, b) of a message, its images left unread
+  export function joined(mem: Memory, a: number, b: number): string {
+    return Array.from({ length: b - a }, (_, k) => Memory.at(mem, a + k).text).join("");
   }
 
   export async function image_add(mem: Memory, bytes: Buffer): Promise<string | null> {
