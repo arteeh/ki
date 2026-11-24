@@ -1217,15 +1217,20 @@ export namespace Memory {
 
   export function span_when(mem: Memory, part: Part): string {
     const [a, b] = Memory.span(part);
-    return Memory.when(Memory.at(mem, a).date, Memory.at(mem, b).date);
+    return Memory.when(Memory.at(mem, a).date, a === b ? undefined : Memory.at(mem, b).date);
   }
 
   // when messages were sent: one's minute, or the first's and the last's,
   // in the server's time zone and its offset from UTC, as Ki keeps no
   // user's zone (#217)
-  export function when(a: string, b = a): string {
-    const [x, y] = [stamp(a), stamp(b)];
-    if (x.day === y.day && x.time === y.time && x.zone === y.zone) {
+  export function when(a: string, b?: string, card = false): string {
+    const x = stamp(a);
+    const y = b === undefined ? null : stamp(b);
+    if (card) {
+      const full = (d: ReturnType<typeof stamp>) => d.day + " " + d.time + ":" + d.seconds;
+      return y === null ? full(x) : full(x) + " – " + full(y);
+    }
+    if (y === null) {
       return x.day + " " + x.time + " " + x.zone;
     }
     const end = (x.day === y.day ? "" : y.day + " ") + y.time + " " + y.zone;
@@ -1258,7 +1263,7 @@ export namespace Memory {
       return null;
     }
     const [a, b] = part === null ? [i, i] : Memory.span(part);
-    const when = Memory.when(Memory.at(mem, a).date, Memory.at(mem, b).date);
+    const when = Memory.when(Memory.at(mem, a).date, a === b ? undefined : Memory.at(mem, b).date, true);
     const head = root === null ? ["LVL" + l + " #" + a + (a === b ? "" : "-" + b), when, Memory.bytes(text) + " B"] : ["ROOT #" + i, when, root.kind, root.size + " B"];
     return { h: head.join(" · "), t: text, k: root?.kind };
   }
@@ -1369,10 +1374,10 @@ export namespace Memory {
 
 }
 
-function stamp(iso: string): { day: string; time: string; zone: string } {
+function stamp(iso: string): { day: string; time: string; seconds: string; zone: string } {
   const d = new Date(iso);
   const two = (n: number) => String(n).padStart(2, "0");
   const off = -d.getTimezoneOffset();
   const zone = (off < 0 ? "-" : "+") + two(Math.floor(Math.abs(off) / 60)) + ":" + two(Math.abs(off) % 60);
-  return { day: d.getFullYear() + "-" + two(d.getMonth() + 1) + "-" + two(d.getDate()), time: two(d.getHours()) + ":" + two(d.getMinutes()), zone };
+  return { day: d.getFullYear() + "-" + two(d.getMonth() + 1) + "-" + two(d.getDate()), time: two(d.getHours()) + ":" + two(d.getMinutes()), seconds: two(d.getSeconds()), zone };
 }
