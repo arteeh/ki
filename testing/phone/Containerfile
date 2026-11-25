@@ -1,5 +1,5 @@
 # podman build -t ki-test-phone testing/phone
-# the system image's Chrome is 133: Google's own x86_64 build of a current
+# the system image ships an older Chrome: Google's own x86_64 build of a current
 # one, from APKMirror (Google Play needs an account; its Cloudflare lets
 # this curl through, not Ubuntu's)
 FROM quay.io/centos/centos:stream10 AS chrome
