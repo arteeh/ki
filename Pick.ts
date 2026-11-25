@@ -71,7 +71,7 @@ const REPLACED: Record<string, string> = { "gpt-6-astra": "gpt-6.2-astra", "gpt-
 // a tie goes to the lesser; an effort or a model off LEVELS, to its default
 function closest(model: Model, effort: string): string {
   const at = LEVELS.indexOf(effort);
-  const known = model.efforts.filter((e) => LEVELS.includes(e));
+  const known = LEVELS.filter((e) => model.efforts.includes(e));
   if (Pick.offers(model, effort)) {
     return effort;
   }
