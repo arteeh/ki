@@ -21,6 +21,8 @@ type Bell = { state: Html.Notify; push: Push | null };
 type Back = { at: { a: number; top: number } | null; y: number | null; away: { y: number; end: boolean; chat: string } | null; caret: [number, number]; focus: boolean };
 
 const DESK = matchMedia("(hover: hover)");
+// the kind of pointer that pressed last
+let POINTER = "mouse";
 
 const ME_WAIT = 4000;
 // "on" or "off": notifications as the user last had them on this device
@@ -376,6 +378,12 @@ function solo(title: string, sub: string, more = ""): void {
   document.body.innerHTML = `<main><h1>${title}</h1><p class="sub">${sub}</p>${more}</main>`;
 }
 
+// a press as on a phone's touchscreen: a finger's or a pen's, or any on a
+// screen that can't hover (#221)
+function tapped(): boolean {
+  return !DESK.matches || POINTER !== "mouse";
+}
+
 function chat(): void {
   const file = $("input[type=file]", HTMLInputElement);
   Box.box_new(BOX, { input: typed, files: attach });
@@ -394,11 +402,12 @@ function chat(): void {
   };
   // a press on the / list keeps the composer's focus, its click picks
   $("#slash").onpointerdown = (ev) => ev.preventDefault();
-  // a phone's keyboard stays up for a tap in the chat but on a field
+  document.addEventListener("pointerdown", (ev) => (POINTER = ev.pointerType), { capture: true, passive: true });
+  // a phone's keyboard stays up for a tap anywhere on the chat but a field
   // (#221): the tap that lands takes no focus, its click still acts
   document.addEventListener("mousedown", (ev) => {
-    const target = ev.target instanceof Element ? ev.target : null;
-    if (!DESK.matches && Box.box_focused() && target !== null && target.closest("header, #log, footer") !== null && target.closest("input, textarea, select, [contenteditable]") === null) {
+    const field = ev.target instanceof Element && ev.target.closest("input, textarea, select, [contenteditable]") !== null;
+    if (tapped() && Box.box_focused() && !$("#log").hidden && !field) {
       ev.preventDefault();
     }
   });
@@ -419,7 +428,7 @@ function chat(): void {
   $("#pick").addEventListener("beforetoggle", (ev) => {
     const menu = ev.target as HTMLElement;
     const here = menu.querySelector("[autofocus]");
-    if (here !== null && ev.newState === "open" && !DESK.matches && Box.box_focused()) {
+    if (here !== null && ev.newState === "open" && tapped() && Box.box_focused()) {
       here.removeAttribute("autofocus");
       menu.addEventListener("toggle", () => here.setAttribute("autofocus", ""), { once: true });
     }
@@ -1803,7 +1812,7 @@ function route(): void {
   });
   $("#log").hidden = !chat;
   // leaving the chat puts a phone's keyboard down (#221)
-  if (!DESK.matches && was !== (chat ? shown_key() : null)) {
+  if (tapped() && was !== (chat ? shown_key() : null)) {
     BOX.blur();
   }
   document.body.classList.toggle("account", page);
