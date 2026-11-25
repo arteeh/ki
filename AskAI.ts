@@ -22,15 +22,17 @@ export type Say = { text: string; imgs: Img[] };
 // a message with who sent it, as the prompts name them (prompts/prompt.md)
 export type Said = Say & { from: string };
 
-export type Block = { text: string; mark: boolean; back?: boolean };
+export type Block = { text: string; mark: boolean; back?: boolean; imgs?: Img[] };
 
 // system: the part every agent shares, which ends a cache entry; own:
-// the agent's own part after it
+// the agent's own part after it; handoff: the turn's progress before this
+// call, after its blocks (AskAI.handoff); taken: the messages steered into
+// this call so far, for a new Claude Code to start with
 export type Ask = Pick & {
   system    : string;
   own?      : string;
   blocks    : Block[];
-  imgs?     : Img[];
+  handoff?  : Block[];
   searches  : number;
   server    : string;
   patient?  : boolean;
@@ -46,6 +48,7 @@ export type Ask = Pick & {
   repick?   : () => Pick;
   used?     : (tokens: number) => void;
   steer?    : Steer;
+  taken?    : Say[];
   limits?   : number;
   who?      : string;
   // ask for the model's reasoning text, to show it (Show thinking as the
@@ -58,22 +61,25 @@ type Prefix = { warm_until: number; writing: Promise<void> | null };
 export type Flight = { begun: () => void; end: () => void };
 
 // the messages that come in while a call works, which it puts in its next
-// request: pending says one waits, take logs and hands them over, taken keeps
-// them for a fresh start of the call (a fallback, a new Claude Code)
-export type Steer = { pending: () => boolean; take: () => Promise<Said[]>; taken: Say[] };
+// request: pending says one waits, take logs and hands them over
+export type Steer = { pending: () => boolean; take: () => Promise<Said[]> };
 
 // why: the reason the vendor or Claude Code gave, if any (#201)
 export type Parked = { until: number; known: boolean; vendor: Vendor; why?: string };
 
 export type Again = { why: string; until: number; limit: boolean };
 
+// why a model refused the call for a while: its usage limit, its credit
+// gone, or a rate limit
+export type Cap = "usage" | "credit" | "rate";
+
 export type Event =
   | { $: "Delta"; kind: Kind; text: string; fresh?: boolean; at?: At }
-  | { $: "Entry"; kind: Kind; text: string; of?: string; queued?: boolean; imgs?: Img[] }
+  | { $: "Entry"; kind: Kind; text: string; of?: string; queued?: boolean; imgs?: Img[]; full?: string }
   | { $: "Start"; of: string }
   | { $: "Limit"; limit: Parked | null }
   | { $: "Again"; again: Again | null }
-  | { $: "Run"; run: Pick; from: Pick | null; why: string; limited: boolean };
+  | { $: "Run"; run: Pick; from: Pick | null; why: string; cap: Cap | null };
 
 type Progress = Extract<Event, { $: "Entry" }> | Say;
 
@@ -85,7 +91,7 @@ export type End = {
   stop?  : "fail" | "lost" | "down";
   off?   : boolean;
   acted? : boolean;
-  quota? : boolean;
+  cap?   : Cap;
   until? : number;
   long?  : boolean;
   limits?: number;
@@ -124,7 +130,9 @@ const UNLED: Flight = { begun: () => {}, end: () => {} };
 
 const COOL = 60e3;
 
-const DOWN = new Map<string, { until: number; why: string; limited: boolean }>();
+type Down = { why: string; cap: Cap | null; until?: number };
+
+const DOWN = new Map<string, Down & { until: number }>();
 
 export namespace AskAI {
 
@@ -139,56 +147,62 @@ export namespace AskAI {
     const out: Call = { wake, stop, done: promise };
     let picks = AskAI.falls(ask);
     let whys: (string | null)[] = picks.map(() => null);
-    let limited_picks = new Set<number>();
-    let progress: Progress[] = [];
-    let started = new Set<string>();
-    let blocks = ask.blocks;
-    let imgs = ask.imgs ?? [];
-    const steer = ask.steer === undefined ? undefined : { ...ask.steer, taken: [] as Say[] };
+    let caps = new Map<number, Cap>();
+    const progress: Progress[] = [];
+    const started = new Set<string>();
+    const taken: Say[] = [];
+    let handoff: Block[] = [];
     let seen_steers = 0;
     let acted = false;
     const remember_steers = () => {
-      const taken = steer?.taken ?? [];
       progress.push(...taken.slice(seen_steers));
       seen_steers = taken.length;
+    };
+    // what a turn (Run's) did so far goes into the next call's request; a
+    // summary or a check starts over
+    const turn = ask.steer !== undefined;
+    const carry = () => {
+      remember_steers();
+      handoff = AskAI.handoff(progress, started);
+      taken.splice(0);
+      seen_steers = 0;
     };
     const skip = (from: number): number => {
       const to = AskAI.up(picks, from);
       for (let i = from; i < to; i++) {
         const down = DOWN.get(AskAI.down_key(picks[i]));
-        whys[i] = (down?.why ?? "") + " (skipped for a minute)";
-        if (down?.limited) {
-          limited_picks.add(i);
+        whys[i] = (down?.why ?? "") + " (skipped for now)";
+        if (down !== undefined && down.cap !== null) {
+          caps.set(i, down.cap);
         }
       }
       return to;
     };
     let k = skip(0);
     let limits = ask.limits ?? 0;
-    let reset: { until: number; vendor: Vendor; why?: string; limits: number } | undefined;
+    // the refusal of this round whose limit lifts first
+    let held: { pick: Pick; until?: number; vendor: Vendor; why?: string; limits: number } | undefined;
     const go = (): Try => {
       const run = picks[k];
       const from = k > 0 ? picks[k - 1] : null;
       const why = from === null ? "" : whys[k - 1] ?? DOWN.get(AskAI.down_key(from))?.why ?? "";
       let heard = picks.length === 1;
-      const fallback = k < picks.length - 1;
       const hear = (ev: Event) => {
-        if (fallback) {
-          remember_steers();
-          if (ev.$ === "Start") {
-            started.add(ev.of);
-          } else if (ev.$ === "Entry" && (ev.kind === "reply" || ev.kind === "tool" || ev.kind === "echo")) {
-            progress.push(ev);
-          }
+        remember_steers();
+        if (ev.$ === "Start") {
+          started.add(ev.of);
+        } else if (turn && ev.$ === "Entry" && (ev.kind === "reply" || ev.kind === "tool" || ev.kind === "echo")) {
+          progress.push(ev);
         }
         if (!heard && (ev.$ === "Delta" || (ev.$ === "Entry" && ev.kind !== "mind"))) {
           heard = true;
-          on({ $: "Run", run: Pick.named(run), from: from && Pick.named(from), why, limited: limited_picks.has(k - 1) });
+          on({ $: "Run", run: Pick.named(run), from: from && Pick.named(from), why, cap: caps.get(k - 1) ?? null });
         }
         on(ev);
       };
       const probe = picks.length > 1 && DOWN.has(AskAI.down_key(run));
-      return AskAI.start({ ...ask, ...run, blocks, imgs, steer, probe, fallback, limits, fresh: ask.fresh && !acted }, hear);
+      const fallback = k < picks.length - 1;
+      return AskAI.start({ ...ask, ...run, handoff, taken, probe, fallback, limits, fresh: ask.fresh && !acted }, hear);
     };
     let call = go();
     const run = async (): Promise<End> => {
@@ -198,56 +212,50 @@ export namespace AskAI {
         const off = failed && end.off === true;
         const unset = failed && end.stop === undefined;
         const up = !halt.signal.aborted && (end.ok || end.stop === "fail" || (end.stop === "down" && !off));
-        const capped = off && (end.limits !== undefined || end.quota === true);
+        const cap = off ? end.cap ?? null : null;
         if (picks.length > 1 && (off || up)) {
-          AskAI.down(picks[k], off ? { why: end.text, limited: capped } : null);
+          AskAI.down(picks[k], off ? { why: end.text, cap, until: end.limits === undefined ? undefined : end.until } : null);
         }
         whys[k] = failed ? end.text : null;
         acted ||= end.acted === true;
-        if (capped) {
-          limited_picks.add(k);
+        if (cap !== null) {
+          caps.set(k, cap);
         }
-        const next = (off || unset) && (capped || end.acted !== true) && k < picks.length - 1;
-        if (next) {
-          remember_steers();
-          const carried = AskAI.handoff(progress, started);
-          if (carried.text !== "") {
-            blocks = [...blocks, { text: carried.text, mark: false }];
-            imgs = [...imgs, ...carried.imgs];
-          }
-          steer?.taken.splice(0);
-          seen_steers = 0;
-          progress = [];
-          started = new Set();
-        }
-        const wait = failed && !next && ask.patient === true;
         const left = picks[k];
-        const limited = wait && end.limits !== undefined;
-        if (end.limits !== undefined && end.until !== undefined && end.until < (reset?.until ?? Infinity)) {
-          reset = { until: end.until, vendor: left.vendor, why: end.why, limits: end.limits };
+        if (failed && end.limits !== undefined && (held === undefined || (end.until ?? Infinity) < (held.until ?? Infinity))) {
+          held = { pick: left, until: end.until, vendor: left.vendor, why: end.why, limits: end.limits };
+        }
+        const next = (off || unset) && (cap !== null || end.acted !== true) && k < picks.length - 1;
+        const wait = failed && !next && ask.patient === true;
+        if (next || wait) {
+          carry();
         }
         if (wait) {
-          const ms = Math.min(WEEK, Math.max(AGAIN, (end.until ?? 0) - Date.now()));
-          const why = left.vendor + ":" + Pick.named(left).model + ": " + (limited ? "usage limit" : end.why ?? end.text);
-          on({ $: "Again", again: { why, until: Date.now() + ms, limit: limited } });
-          await AskAI.nap_till_woken(ask, picks, limited ? left.vendor : null, ms, halt.signal);
+          const ms = Math.min(WEEK, Math.max(AGAIN, (held?.until ?? 0) - Date.now()));
+          const by = held?.pick ?? left;
+          const why = by.vendor + ":" + Pick.named(by).model + ": " + (held !== undefined ? "usage limit" : end.why ?? end.text);
+          on({ $: "Again", again: { why, until: Date.now() + ms, limit: held !== undefined } });
+          await AskAI.nap_till_woken(ask, picks, held?.vendor ?? null, ms, halt.signal);
           const now = ask.repick === undefined || halt.signal.aborted ? picks : AskAI.falls(ask.repick());
           if (!AskAI.same(now, picks)) {
             picks = now;
             whys = picks.map(() => null);
-            limited_picks = new Set();
           }
+          caps = new Map();
           if (!halt.signal.aborted) {
             on({ $: "Again", again: null });
           }
         }
         if (halt.signal.aborted || (!next && !wait)) {
           const all = whys.flatMap((why, i) => (why === null ? [] : [picks[i].vendor + ":" + Pick.named(picks[i]).model + ": " + why]));
-          const limit = end.limits === undefined ? {} : reset ?? { vendor: left.vendor };
+          const limit = failed && held !== undefined ? { until: held.until, vendor: held.vendor, why: held.why, limits: held.limits } : {};
           return failed && all.length > 1 ? { ...end, ...limit, text: "no model answered; " + all.join("; ") } : { ...end, ...limit };
         }
         k = skip(next ? k + 1 : 0);
-        limits = limited && picks[k] === left ? end.limits ?? 0 : 0;
+        limits = wait && held !== undefined && picks[k] === held.pick ? held.limits : 0;
+        if (wait) {
+          held = undefined;
+        }
         call = go();
         end = await call.done;
       }
@@ -256,23 +264,36 @@ export namespace AskAI {
     return out;
   }
 
-  export function handoff(progress: Progress[], started: Set<string>): Say {
-    const lines: string[] = [];
-    const imgs: Img[] = [];
+  // the turn's progress, one JSON line each, a line's images right after it
+  export function handoff(progress: Progress[], started: Set<string>): Block[] {
     const results = new Set(progress.flatMap((event) => ("$" in event && event.kind === "echo" && event.of !== undefined ? [event.of] : [])));
-    for (const event of progress) {
+    const lines = progress.flatMap((event): Say[] => {
+      const imgs = event.imgs ?? [];
+      const images = imgs.length > 0 ? { images: imgs.length } : {};
       if (!("$" in event)) {
-        lines.push(JSON.stringify({ kind: "steering message", text: event.text }));
-        imgs.push(...event.imgs);
-      } else if (event.kind !== "tool" || !event.queued || (event.of !== undefined && started.has(event.of))) {
-        const kind = event.kind === "tool" ? "tool call" : event.kind === "echo" ? "tool result" : "assistant reply";
-        const no_result = event.kind === "tool" && event.of !== undefined && !results.has(event.of);
-        lines.push(JSON.stringify({ kind, id: event.of, text: event.text, ...(no_result ? { status: "no recorded result; may have run" } : {}) }));
-        imgs.push(...(event.imgs ?? []));
+        return [{ text: JSON.stringify({ kind: "steering message", text: event.text, ...images }), imgs }];
+      }
+      if (event.kind === "tool" && event.queued === true && (event.of === undefined || !started.has(event.of))) {
+        return [];
+      }
+      const kind = event.kind === "tool" ? "tool call" : event.kind === "echo" ? "tool result" : "assistant reply";
+      const no_result = event.kind === "tool" && event.of !== undefined && !results.has(event.of);
+      return [{ text: JSON.stringify({ kind, id: event.of, text: event.full ?? event.text, ...(no_result ? { status: "no recorded result; may have run" } : {}), ...images }), imgs }];
+    });
+    if (lines.length === 0) {
+      return [];
+    }
+    const blocks = [{ text: AskAI.labeled({ text: Prompts.prompt("handoff"), imgs: [], from: Prompts.sender("ki") }), mark: false, imgs: [] as Img[] }];
+    for (const line of lines) {
+      const top = blocks[blocks.length - 1];
+      if (top.imgs.length > 0) {
+        blocks.push({ text: line.text, mark: false, imgs: line.imgs });
+      } else {
+        top.text += "\n" + line.text;
+        top.imgs = line.imgs;
       }
     }
-    const head = "Ki switched models during this turn. Continue the same task from the progress below. Do not repeat completed tool calls. Verify the outcome of any call without a recorded result before retrying it.";
-    return { text: lines.length === 0 ? "" : head + "\n" + lines.join("\n"), imgs };
+    return blocks;
   }
 
   export function labeled(said: Said, working = false): string {
@@ -285,12 +306,8 @@ export namespace AskAI {
       return null;
     }
     const say = { text: says.map((s) => AskAI.labeled(s, true) + "\n\n" + Prompts.prompt("steer")).join("\n\n"), imgs: says.flatMap((s) => s.imgs) };
-    ask.steer?.taken.push(say);
+    ask.taken?.push(say);
     return say;
-  }
-
-  export function taken(ask: Ask): Say[] {
-    return ask.steer?.taken ?? [];
   }
 
   // output of the model's: a message it answered is no longer queued
@@ -346,13 +363,15 @@ export namespace AskAI {
     return k;
   }
 
-  export function down(run: Pick, off: { why: string; limited: boolean } | null): void {
+  // a limit's reset ends its cool-down early, so a call woken at it asks
+  // that model again
+  export function down(run: Pick, off: Down | null): void {
     const key = AskAI.down_key(run);
     if ((off !== null) !== DOWN.has(key)) {
-      console.error(Pick.label(Pick.named(run)) + (off !== null ? ": unavailable to profiles" : ": available to profiles again"));
+      console.error(Pick.label(Pick.named(run)) + (off !== null ? ": failed; calls go on with their fallbacks" : ": answers again"));
     }
     if (off !== null) {
-      DOWN.set(key, { until: Date.now() + COOL, ...off });
+      DOWN.set(key, { ...off, until: Math.min(Date.now() + COOL, off.until ?? Infinity) });
     } else {
       DOWN.delete(key);
     }

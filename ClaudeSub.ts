@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { Options, Query, SDKMessage, SDKRateLimitInfo, SDKUserMessage, SpawnOptions, SyncHookJSONOutput } from "@anthropic-ai/claude-agent-sdk";
 import * as Prompts from "./Prompts.ts";
-import { AskAI, type Ask, type End, type Event, type Img, type Try } from "./AskAI.ts";
+import { AskAI, type Ask, type Cap, type End, type Event, type Img, type Try } from "./AskAI.ts";
 import { Agent, BUSY, TOO_LONG, type Emit } from "./Agent.ts";
 import { Anthropic } from "./Anthropic.ts";
 import { LIMIT, Limit, type Off } from "./Limit.ts";
@@ -378,11 +378,11 @@ export namespace ClaudeSub {
     Limit.note("claude-sub", on && bills ? ClaudeSub.reset(info) ?? Date.now() + LIMIT : null);
   }
 
-  export function off(ask: Ask, off: Off, acted: boolean): Partial<End> {
+  export function off(ask: Ask, off: Off, acted: boolean, cap: Cap): Partial<End> {
     if (ask.patient !== true) {
       console.error(ask.model + ": " + off.say.slice(0, 300));
     }
-    return { text: off.say, why: off.why, stop: "down", off: true, acted, until: off.until, limits: off.limits };
+    return { text: off.say, why: off.why, stop: "down", off: true, acted, until: off.until, limits: off.limits, cap };
   }
 
   export async function run(ask: Ask, on: (ev: Event) => void, signal: AbortSignal, limit: Limit): Promise<Partial<End>> {
@@ -406,7 +406,7 @@ export namespace ClaudeSub {
       for (let tries = 0; !signal.aborted; ) {
         const guarded = await Limit.guard(limit, "claude-sub", acted.v);
         if (guarded !== null) {
-          return ClaudeSub.off(ask, guarded, acted.v);
+          return ClaudeSub.off(ask, guarded, acted.v, "usage");
         }
         if (signal.aborted) {
           continue;
@@ -459,7 +459,7 @@ export namespace ClaudeSub {
         }
         const off = await Limit.hit(limit, got.limit.until, acted.v, got.limit.text, got.limit.usage);
         if (off !== null) {
-          return ClaudeSub.off(ask, off, acted.v);
+          return ClaudeSub.off(ask, off, acted.v, got.limit.usage ? "usage" : "rate");
         }
       }
       return {};
@@ -482,21 +482,20 @@ export namespace ClaudeSub {
     return ClaudeSub.bin();
   }
 
-  // a new Claude Code's message: the call's blocks and every message steered
-  // into the call so far (AskAI.steered)
+  // a new Claude Code's message: the call's blocks, the turn's progress
+  // before it and every message steered into the call so far (AskAI.steered)
   export async function first_message(code: Code, ask: Ask, notes: string[]): Promise<void> {
     await AskAI.steered(ask);
     const blocks = Agent.noted(ask.blocks, notes).filter((b) => b.text !== "");
-    const taken = AskAI.taken(ask);
-    code.box.put([...blocks.map((b) => b.text), ...taken.map((say) => say.text)], [...(ask.imgs ?? []), ...taken.flatMap((say) => say.imgs)], blocks.slice(0, -1).findLastIndex((b) => b.mark));
+    code.box.put([...blocks, ...(ask.handoff ?? []), ...(ask.taken ?? [])], blocks.slice(0, -1).findLastIndex((b) => b.mark));
   }
 
   // a kept Claude Code's turn goes on (after a limit's reset: lead), with
   // the messages steered in since, in one message: two would start two turns
   export async function go_on(code: Code, ask: Ask, lead: string[]): Promise<void> {
     const say = await AskAI.steered(ask);
-    const texts = [...lead.map((text) => AskAI.labeled({ text, imgs: [], from: Prompts.sender("ki") })), ...(say === null ? [] : [say.text])];
-    code.box.put(texts.length === 0 ? [AskAI.labeled({ text: Prompts.prompt("continue"), imgs: [], from: Prompts.sender("ki") })] : texts, say?.imgs ?? []);
+    const parts = [...lead.map((text) => ({ text: AskAI.labeled({ text, imgs: [], from: Prompts.sender("ki") }) })), ...(say === null ? [] : [say])];
+    code.box.put(parts.length === 0 ? [{ text: AskAI.labeled({ text: Prompts.prompt("continue"), imgs: [], from: Prompts.sender("ki") }) }] : parts);
   }
 
   export function died_before_saying(err: unknown, said: boolean, signal: AbortSignal): boolean {
@@ -615,7 +614,7 @@ export namespace ClaudeSub {
       queue.push({ type: "user", message: { role: "user", content: content as Exclude<SDKUserMessage["message"]["content"], string> }, parent_tool_use_id: null });
       wake();
     };
-    const put = (texts: string[], imgs: Img[], mark = -1) => push(Anthropic.content(texts, imgs).map((b, k) => (k === mark ? { ...b, cache_control: HOUR } : b)));
+    const put = (parts: Array<{ text: string; imgs?: Img[] }>, mark = -1) => push(parts.flatMap((p, k) => [{ type: "text", text: p.text, ...(k === mark ? { cache_control: HOUR } : {}) }, ...(p.imgs ?? []).map(Anthropic.image)]));
     const close = () => {
       shut = true;
       wake();

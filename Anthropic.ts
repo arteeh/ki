@@ -117,8 +117,8 @@ export namespace Anthropic {
       case "User": {
         const last = item.parts.length - 1;
         const marked = (p: Block, k: number) => (talk ? (p.mark && k < last) || p.back === true : p.mark);
-        const texts = item.parts.map((p, k) => ({ type: "text", text: p.text, cache_control: marked(p, k) ? HOUR : undefined }));
-        return { role: "user", content: [...texts, ...item.imgs.map(Anthropic.image)] };
+        const content = item.parts.flatMap((p, k) => [{ type: "text", text: p.text, cache_control: marked(p, k) ? HOUR : undefined }, ...(p.imgs ?? []).map(Anthropic.image)]);
+        return { role: "user", content };
       }
       case "Turn": {
         return { role: "assistant", content: [...item.out] };
@@ -332,7 +332,19 @@ export namespace Anthropic {
   }
 
   export function server_echo(content: unknown, of: string | undefined): Entry {
-    return { kind: "echo", text: Anthropic.result_text(content) || "(no output)", of };
+    const text = Anthropic.result_text(content) || "(no output)";
+    const page = Anthropic.page(content);
+    return { kind: "echo", text, of, ...(page === null ? {} : { full: text + "\n\n" + page }) };
+  }
+
+  // a fetched page as the model read it: its text, or what it was if not text
+  export function page(c: unknown): string | null {
+    const source = get(get(c, "content"), "source");
+    const data = get(source, "data");
+    if (get(c, "type") !== "web_fetch_result") {
+      return null;
+    }
+    return get(source, "type") === "text" && typeof data === "string" ? data : "(not carried over: its content is " + text_of(get(source, "media_type"), "not text") + ")";
   }
 
   export function result_text(c: unknown): string {

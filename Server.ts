@@ -5,7 +5,7 @@ import * as net from "node:net";
 import * as path from "node:path";
 import type { ServerWebSocket } from "bun";
 import type { Out as Done } from "./Agent.ts";
-import { AskAI, type Ask, type Block, type Call, type End, type Event, type Kind, type Parked, type Said, type Say, type Vendor } from "./AskAI.ts";
+import { AskAI, type Ask, type Block, type Call, type Cap, type End, type Event, type Kind, type Parked, type Said, type Say, type Vendor } from "./AskAI.ts";
 import { call_parse, call_text, report_read, tool_name } from "./Call.ts";
 import { Sub, type How, type Role, type Row as SubRow, type Spawn } from "./Sub.ts";
 import { Disk } from "./Disk.ts";
@@ -140,6 +140,8 @@ const TALK_OFF_AT = 0.9;
 // the user's Stop: no note in the chat; the next turn starts with it
 const STOPPED    = "Stopped by the user.";
 const STOPPED_TOLD = "(Your last turn was stopped by the user.)";
+// a profile's model that refused for a while, as its fallback goes on (#222)
+const CAPPED: Record<Cap, string> = { usage: " hit its usage limit", credit: " is out of credit", rate: " is rate-limited" };
 const FULL       = "Ki's disk is full; try again soon.";
 const BATCH      = "/import.json";
 const SPARE      = 2 ** 30;
@@ -554,18 +556,17 @@ export namespace Chat {
     Mcp.heard(chat.tools.mcp, Tools.off(chat.tools), chat.who, true);
     const text = (chat.stopped ? STOPPED_TOLD + "\n\n" : "") + says.map((say) => AskAI.labeled(say)).join("\n\n");
     chat.stopped = false;
-    const imgs = says.flatMap((say) => say.imgs);
     const server = Tools.at(chat.tools, chat.who);
     chat.eye = Chat.eye(mem, from);
     chat.socks.forEach((sock) => Chat.show(chat, sock));
-    const blocks = [...view, Tools.devices(chat.tools, chat.id, chat.mem.dir), Tools.skills(chat.tools), Tools.at_work(chat.tools, chat.who), ...Chat.leader_block(chat.leader), { text: Prompts.prompt("turn") + "\n\n" + text, mark: true }];
+    const blocks = [...view, Tools.devices(chat.tools, chat.id, chat.mem.dir), Tools.skills(chat.tools), Tools.at_work(chat.tools, chat.who), ...Chat.leader_block(chat.leader), { text: Prompts.prompt("turn") + "\n\n" + text, mark: true, imgs: says.flatMap((say) => say.imgs) }];
     const model = chat.pick.model;
     const used = (tokens: number) => {
       if (chat.pick.model === model) {
         Chat.used(chat, tokens);
       }
     };
-    const ask = { ...Chat.share(chat, Chat.system(chat)), searches: SEARCHES, server, blocks, imgs, talk: mem.talk !== null, no_wait: true, limits, who: chat.who, used, minds: config.THINKING };
+    const ask = { ...Chat.share(chat, Chat.system(chat)), searches: SEARCHES, server, blocks, talk: mem.talk !== null, no_wait: true, limits, who: chat.who, used, minds: config.THINKING };
     chat.model = model;
     chat.asked = true;
     return ask;
@@ -977,8 +978,14 @@ export namespace Chat {
       return;
     }
     run.fell = now;
-    const text = ev.from === null ? "Back on " + Pick.label(ev.run) + "." : ev.limited ? ev.from.model + " hit its usage limit. Continuing with " + ev.run.model + "." : Pick.label(ev.from) + " failed: " + ev.why.replace(/\.$/, "") + ". Going on with " + now + ".";
+    const text = ev.from === null ? "Back on " + Pick.label(ev.run) + "." : ev.cap !== null ? Chat.capped(ev.from, ev.run, ev.cap) : Pick.label(ev.from) + " failed: " + ev.why.replace(/\.$/, "") + ". Going on with " + now + ".";
     Chat.hold(chat, () => Chat.noted(chat, run, text));
+  }
+
+  // a model of the same name is told by its vendor
+  export function capped(from: Pick, to: Pick, cap: Cap): string {
+    const name = (p: Pick) => (from.model === to.model ? p.vendor + ":" + p.model : p.model);
+    return name(from) + CAPPED[cap] + ". Continuing with " + name(to) + ".";
   }
 
   // the calls with no result yet, and what waits for them, in order

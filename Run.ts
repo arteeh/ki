@@ -109,7 +109,7 @@ export namespace Run {
           break;
         }
         let live = true;
-        const steer: Steer = { pending: () => live && run.queue.length > 0, take: () => (live ? Run.steers(run) : Promise.resolve([])), taken: [] };
+        const steer: Steer = { pending: () => live && run.queue.length > 0, take: () => (live ? Run.steers(run) : Promise.resolve([])) };
         const call = (run.call = AskAI.ask({ ...ask, steer }, (ev) => Run.heard(run, ev)));
         kind.change();
         const end = await call.done;

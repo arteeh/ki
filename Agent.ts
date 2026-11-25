@@ -28,14 +28,16 @@ type Room = { holders: number; retrying: number; wait: Array<() => void> };
 type Seat = { model: string; room: string; yields: boolean; held: boolean };
 
 export type Item =
-  | { $: "User"; parts: Block[]; imgs: Img[] }
+  | { $: "User"; parts: Block[] }
   | { $: "Turn"; out: unknown[]; open?: boolean; container?: string }
   | { $: "Back"; backs: Back[] };
 
 export type Use = { id: string; name: string; input: unknown };
 
-// alone: a result of no call, left so (OpenAI's answer citations, #205)
-export type Entry = { kind: Kind; text: string; of?: string; alone?: boolean };
+// alone: a result of no call, left so (OpenAI's answer citations, #205);
+// full: the result as the model read it, where the chat shows less (a
+// fetched page's text)
+export type Entry = { kind: Kind; text: string; of?: string; alone?: boolean; full?: string };
 
 // open: a server tool call it made runs only with the next request (a client
 // call beside it came first), so only tool results may follow it; container:
@@ -142,9 +144,8 @@ export namespace Agent {
       throw new Error("no API key: set " + wire.key.toUpperCase() + "_API_KEY");
     }
     const { tools, notes } = await Agent.server(run);
-    const taken = AskAI.taken(ask);
-    const parts = [...Agent.noted(ask.blocks, notes), ...taken.map((say) => ({ text: say.text, mark: false }))].filter((b) => b.text !== "");
-    const items: Item[] = [{ $: "User", parts, imgs: [...(ask.imgs ?? []), ...taken.flatMap((say) => say.imgs)] }];
+    const parts = [...Agent.noted(ask.blocks, notes), ...(ask.handoff ?? [])].filter((b) => b.text !== "");
+    const items: Item[] = [{ $: "User", parts }];
     while (!signal.aborted) {
       const step = await Agent.step(wire, run, key, (max) => wire.body(ask, items, tools, max), items);
       Agent.entries_queued_till_started(step).forEach(on);
@@ -154,7 +155,7 @@ export namespace Agent {
         end.long = step.stop !== "lost" && TOO_LONG.test(step.why);
         end.stop = step.stop;
         end.off = step.off;
-        end.quota = step.quota;
+        end.cap = step.quota === true ? "credit" : step.limits === undefined ? undefined : step.usage === true ? "usage" : "rate";
         end.until = step.refusal?.until;
         end.limits = step.limits;
         return;
@@ -254,7 +255,7 @@ export namespace Agent {
     }
     const say = await AskAI.steered(ask);
     if (say !== null) {
-      items.push({ $: "User", parts: [{ text: say.text, mark: false }], imgs: say.imgs });
+      items.push({ $: "User", parts: [{ text: say.text, mark: false, imgs: say.imgs }] });
     }
   }
 
@@ -276,6 +277,9 @@ export namespace Agent {
       const last = out.slice(0, k).findLast((r) => r.kind === "echo" && r.of !== undefined && web(r));
       if (last !== undefined) {
         last.text += "\n" + e.text;
+        if (last.full !== undefined) {
+          last.full += "\n" + e.text;
+        }
         gone.add(e);
       }
     });

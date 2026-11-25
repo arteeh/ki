@@ -12,6 +12,7 @@ import GO_ON from "./prompts/go-on.md" with { type: "text" };
 import GOAL from "./prompts/goal.md" with { type: "text" };
 import GOAL_ASK from "./prompts/goal-ask.md" with { type: "text" };
 import GOAL_NO from "./prompts/goal-no.md" with { type: "text" };
+import HANDOFF from "./prompts/handoff.md" with { type: "text" };
 import JOBS from "./prompts/jobs.md" with { type: "text" };
 import LEAF from "./prompts/leaf.md" with { type: "text" };
 import MERGE from "./prompts/merge.md" with { type: "text" };
@@ -42,7 +43,7 @@ import YOU from "./prompts/you.md" with { type: "text" };
 // one prompt for both, a turn sometimes came back a summary), the parts
 // the system prompt is laid out with, an agent's default prompt, the goal
 // check's, and the fixed text of each turn's and each compaction's request
-const BUILT = { agent: AGENT, compact: COMPACT, "compact-agent": COMPACT_AGENT, continue: CONTINUE, device: DEVICE, "device-shell": DEVICE_SHELL, devices: DEVICES, "devices-none": DEVICES_NONE, "go-on": GO_ON, goal: GOAL, "goal-ask": GOAL_ASK, "goal-no": GOAL_NO, jobs: JOBS, leaf: LEAF, merge: MERGE, message: MESSAGE, "message-working": MESSAGE_WORKING, "not-summarized": NOT_SUMMARIZED, over: OVER, prompt: PROMPT, restarted: RESTARTED, senders: SENDERS, skills: SKILLS, "skill-used": SKILL_USED, steer: STEER, sub: SUB, "sub-folder": SUB_FOLDER, "sub-prompt": SUB_PROMPT, subs: SUBS, talking: TALKING, team: TEAM, turn: TURN, leader: LEADER, you: YOU };
+const BUILT = { agent: AGENT, compact: COMPACT, "compact-agent": COMPACT_AGENT, continue: CONTINUE, device: DEVICE, "device-shell": DEVICE_SHELL, devices: DEVICES, "devices-none": DEVICES_NONE, "go-on": GO_ON, goal: GOAL, "goal-ask": GOAL_ASK, "goal-no": GOAL_NO, handoff: HANDOFF, jobs: JOBS, leaf: LEAF, merge: MERGE, message: MESSAGE, "message-working": MESSAGE_WORKING, "not-summarized": NOT_SUMMARIZED, over: OVER, prompt: PROMPT, restarted: RESTARTED, senders: SENDERS, skills: SKILLS, "skill-used": SKILL_USED, steer: STEER, sub: SUB, "sub-folder": SUB_FOLDER, "sub-prompt": SUB_PROMPT, subs: SUBS, talking: TALKING, team: TEAM, turn: TURN, leader: LEADER, you: YOU };
 
 export type Which = keyof typeof BUILT;
 

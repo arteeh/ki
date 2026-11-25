@@ -1,0 +1,1 @@
+This turn goes on in a new model call, maybe on another model: the one before stopped (a usage limit, an outage). Go on with the same task from its progress below, one JSON line each, in order; the images a line counts come right after it. Don't repeat a completed tool call; check the outcome of one without a recorded result before you retry it.

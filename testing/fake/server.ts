@@ -17,9 +17,10 @@ type Used = { input: number; read: number; write: number };
 
 // pace: ms between one block's end and the next's start; minds: the
 // request asked for reasoning text, which a vendor otherwise leaves out;
-// search: OpenAI's own web search, of that action; sources: the request
-// asked for the pages a search consulted
-type Sent = { blocks: Array<{ text: string } | { id: string; name: string; json: string } | { think: string } | { search: Record<string, unknown> }>; stall: number; cut: boolean; pace: number; minds: boolean; sources: boolean };
+// search: OpenAI's own web search, of that action; server: Anthropic's own
+// tool call, its result the block after it; sources: the request asked for
+// the pages a search consulted
+type Sent = { blocks: Array<{ text: string } | { id: string; name: string; json: string } | { think: string } | { search: Record<string, unknown> } | { server: { id: string; name: string; json: string } } | { result: object }>; stall: number; cut: boolean; pace: number; minds: boolean; sources: boolean };
 
 export const CONTROL = 9999;
 
@@ -189,11 +190,14 @@ function anthropic(vendor: Vendor, model: string, sent: Sent, used: Used): Respo
       events.push(["ping", { type: "ping" }]);
       chunks(b.text).forEach((text) => events.push(["content_block_delta", { type: "content_block_delta", index, delta: { type: "text_delta", text } }]));
       out += tokens(b.text);
-    } else if ("id" in b) {
-      events.push(["content_block_start", { type: "content_block_start", index, content_block: { type: "tool_use", id: b.id, name: b.name, input: {}, caller: { type: "direct" } } }]);
+    } else if ("id" in b || "server" in b) {
+      const use = "id" in b ? b : b.server;
+      events.push(["content_block_start", { type: "content_block_start", index, content_block: { type: "id" in b ? "tool_use" : "server_tool_use", id: use.id, name: use.name, input: {}, caller: { type: "direct" } } }]);
       events.push(["ping", { type: "ping" }]);
-      (b.json.match(/.{1,12}/gs) ?? [""]).forEach((partial_json) => events.push(["content_block_delta", { type: "content_block_delta", index, delta: { type: "input_json_delta", partial_json } }]));
-      out += tokens(b.json);
+      (use.json.match(/.{1,12}/gs) ?? [""]).forEach((partial_json) => events.push(["content_block_delta", { type: "content_block_delta", index, delta: { type: "input_json_delta", partial_json } }]));
+      out += tokens(use.json);
+    } else if ("result" in b) {
+      events.push(["content_block_start", { type: "content_block_start", index, content_block: b.result }]);
     }
     events.push(["content_block_stop", { type: "content_block_stop", index }]);
     if (sent.pace > 0 && index < sent.blocks.length - 1) {
@@ -287,7 +291,7 @@ function openai(vendor: Vendor, model: string, sent: Sent, used: Used): Response
       ev("response.output_item.done", { output_index, item });
       done.push(item);
       out += tokens(b.text);
-    } else {
+    } else if ("id" in b) {
       const item_id = hex("fc_");
       const item = { id: item_id, type: "function_call", status: "in_progress", arguments: "", call_id: b.id, name: b.name };
       ev("response.output_item.added", { output_index, item });
@@ -314,6 +318,17 @@ function openai(vendor: Vendor, model: string, sent: Sent, used: Used): Response
     ev("response.completed", { response: response(model, "completed", output, usage) });
   }
   return sse(events, sent.stall, sent.cut, limits(vendor));
+}
+
+// Anthropic's web_fetch, as its docs show it: the call, then its result
+// whole; the input's "text" (the page, else a PDF's bytes) and "title"
+// are the fake's
+function fetched(input: unknown): Sent["blocks"] {
+  const { text, title = "", ...call } = rec(input) ? input : {};
+  const use = id("srvtoolu_01");
+  const source = typeof text === "string" ? { type: "text", media_type: "text/plain", data: text } : { type: "base64", media_type: "application/pdf", data: Buffer.from("%PDF-1.7").toString("base64") };
+  const content = { type: "web_fetch_result", url: call.url, content: { type: "document", source, title, citations: { enabled: true } }, retrieved_at: new Date().toISOString() };
+  return [{ server: { id: use, name: "web_fetch", json: JSON.stringify(call) } }, { result: { type: "web_fetch_tool_result", tool_use_id: use, content } }];
 }
 
 function vendor_of(req: Request, url: URL): Vendor | null {
@@ -406,9 +421,9 @@ async function model(req: Request, vendor: Vendor, url: URL): Promise<Response> 
   const named = (n: string) => tools.find((t) => t === n || t.endsWith("__" + n)) ?? n;
   const think = (order.what === "reply" || order.what === "tool") && order.think !== undefined ? [{ think: order.think }] : [];
   const hosted = (n: string) => !claude && n === "web_search" && tools.includes("web_search");
-  const calls: Sent["blocks"] = order.what === "tool" ? order.calls.map(([n, input]) => (hosted(n) ? { search: rec(input) ? input : {} } : { id: claude ? id("toolu_01") : id("call_"), name: named(n), json: JSON.stringify(input) })) : [];
-  // a response of searches only goes on to its answer, as OpenAI's does
-  const answer = calls.length > 0 && calls.every((b) => "search" in b) ? [{ text: "ok" }] : [];
+  const calls: Sent["blocks"] = order.what === "tool" ? order.calls.flatMap(([n, input]) => (hosted(n) ? [{ search: rec(input) ? input : {} }] : claude && n === "web_fetch" && tools.includes("web_fetch") ? fetched(input) : [{ id: claude ? id("toolu_01") : id("call_"), name: named(n), json: JSON.stringify(input) }])) : [];
+  // a response of hosted calls only goes on to its answer, as the vendors' do
+  const answer = calls.length > 0 && calls.every((b) => "search" in b || "server" in b || "result" in b) ? [{ text: "ok" }] : [];
   const blocks: Sent["blocks"] = order.what === "tool" ? [...think, ...calls, ...answer] : [...think, { text: order.what === "reply" ? order.text : "ok" }];
   const minds = claude ? get(get(body, "thinking"), "display") === "summarized" : get(get(body, "reasoning"), "summary") !== undefined;
   const sources = list(get(body, "include")).includes("web_search_call.action.sources");

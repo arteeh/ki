@@ -76,8 +76,8 @@ export namespace OpenAI {
   export function input(item: Item): unknown[] {
     switch (item.$) {
       case "User": {
-        const texts = item.parts.map((p) => ({ type: "input_text", text: p.text, prompt_cache_breakpoint: p.mark ? MARK : undefined }));
-        return [{ role: "user", content: [...texts, ...item.imgs.map(OpenAI.image)] }];
+        const content = item.parts.flatMap((p) => [{ type: "input_text", text: p.text, prompt_cache_breakpoint: p.mark ? MARK : undefined }, ...(p.imgs ?? []).map(OpenAI.image)]);
+        return [{ role: "user", content }];
       }
       case "Turn": {
         return item.out;

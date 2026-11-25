@@ -923,7 +923,7 @@ export function view_tail(v: View): Row[] {
     const last = v.page.log?.at(-1);
     const limit = sub?.limit ?? null;
     const idle = sub !== undefined && v.page.live.length === 0 && (last?.kind !== "tool" || last.echo !== undefined) && limit === null;
-    return [...after_run(thought), ...(idle ? [WAITING] : []), ...(limit === null ? [] : [Cap(limit_show(limit))]), ...queued];
+    return [...after_run(thought), ...(idle ? [WAITING] : []), ...(limit === null ? [] : [limit_cap(limit)]), ...queued];
   }
   const thought = v.thinking === false && (v.live.some((_, k) => thinks(v.live, k)) || (v.live.length === 0 && v.busy && v.wait === "" && thought_last(v))) ? [THINKING] : [];
   const rows = after_run(thought);
@@ -933,7 +933,7 @@ export function view_tail(v: View): Row[] {
   const queued = v.queue.flatMap((q) => waits(q.kind, q.text, true));
   const after = [...queued, ...kept, ...load];
   if (v.limit !== null) {
-    return [...rows, { $: "Cap", text: "Ki · " + limit_show(v.limit), notice: true }, ...after];
+    return [...rows, limit_cap(v.limit), ...after];
   }
   if (v.wait === SUMMARIES) {
     return [...rows, ...(rows.length > 0 ? [] : [Cap(sums_show(v.sums, v.again))]), ...after];
@@ -951,8 +951,9 @@ function sums_show(sums: Sums | null, again: Again | null, now = Date.now()): st
   return head + " · compactor: " + why + ", asking again " + when;
 }
 
-function limit_show(limit: Parked, now = Date.now()): string {
-  return limit_note(limit, limit.known ? "resumes" : "tries again", now);
+// a parked wait's row, said by Ki (#222)
+function limit_cap(limit: Parked): Row {
+  return { $: "Cap", text: "Ki · " + limit_note(limit, limit.known ? "resumes" : "tries again"), notice: true };
 }
 
 // the one usage-limit note: the parked wait's row, a call ended by one
