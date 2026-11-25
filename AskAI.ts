@@ -130,8 +130,13 @@ const UNLED: Flight = { begun: () => {}, end: () => {} };
 
 const COOL = 60e3;
 
-type Down = { why: string; cap: Cap | null; until?: number };
+// a limit a model refused with: when it lifts, the vendor's reason, and how
+// many in a row
+type Reset = { until?: number; why?: string; limits: number };
 
+type Down = { why: string; cap: Cap | null; reset?: Reset };
+
+// until: when its cool-down ends
 const DOWN = new Map<string, Down & { until: number }>();
 
 export namespace AskAI {
@@ -167,6 +172,13 @@ export namespace AskAI {
       taken.splice(0);
       seen_steers = 0;
     };
+    // the refusal of this round whose limit lifts first, a skipped model's too
+    let held: (Reset & { pick: Pick; vendor: Vendor }) | undefined;
+    const hold = (pick: Pick, reset: Reset) => {
+      if (held === undefined || (reset.until ?? Infinity) < (held.until ?? Infinity)) {
+        held = { ...reset, pick, vendor: pick.vendor };
+      }
+    };
     const skip = (from: number): number => {
       const to = AskAI.up(picks, from);
       for (let i = from; i < to; i++) {
@@ -175,13 +187,14 @@ export namespace AskAI {
         if (down !== undefined && down.cap !== null) {
           caps.set(i, down.cap);
         }
+        if (down?.reset !== undefined) {
+          hold(picks[i], down.reset);
+        }
       }
       return to;
     };
     let k = skip(0);
     let limits = ask.limits ?? 0;
-    // the refusal of this round whose limit lifts first
-    let held: { pick: Pick; until?: number; vendor: Vendor; why?: string; limits: number } | undefined;
     const go = (): Try => {
       const run = picks[k];
       const from = k > 0 ? picks[k - 1] : null;
@@ -213,8 +226,9 @@ export namespace AskAI {
         const unset = failed && end.stop === undefined;
         const up = !halt.signal.aborted && (end.ok || end.stop === "fail" || (end.stop === "down" && !off));
         const cap = off ? end.cap ?? null : null;
+        const reset = failed && end.limits !== undefined ? { until: end.until, why: end.why, limits: end.limits } : undefined;
         if (picks.length > 1 && (off || up)) {
-          AskAI.down(picks[k], off ? { why: end.text, cap, until: end.limits === undefined ? undefined : end.until } : null);
+          AskAI.down(picks[k], off ? { why: end.text, cap, reset } : null);
         }
         whys[k] = failed ? end.text : null;
         acted ||= end.acted === true;
@@ -222,8 +236,8 @@ export namespace AskAI {
           caps.set(k, cap);
         }
         const left = picks[k];
-        if (failed && end.limits !== undefined && (held === undefined || (end.until ?? Infinity) < (held.until ?? Infinity))) {
-          held = { pick: left, until: end.until, vendor: left.vendor, why: end.why, limits: end.limits };
+        if (reset !== undefined) {
+          hold(left, reset);
         }
         const next = (off || unset) && (cap !== null || end.acted !== true) && k < picks.length - 1;
         const wait = failed && !next && ask.patient === true;
@@ -251,11 +265,12 @@ export namespace AskAI {
           const limit = failed && held !== undefined ? { until: held.until, vendor: held.vendor, why: held.why, limits: held.limits } : {};
           return failed && all.length > 1 ? { ...end, ...limit, text: "no model answered; " + all.join("; ") } : { ...end, ...limit };
         }
-        k = skip(next ? k + 1 : 0);
-        limits = wait && held !== undefined && picks[k] === held.pick ? held.limits : 0;
+        const was = held;
         if (wait) {
           held = undefined;
         }
+        k = skip(next ? k + 1 : 0);
+        limits = wait && was !== undefined && picks[k] === was.pick ? was.limits : 0;
         call = go();
         end = await call.done;
       }
@@ -371,7 +386,7 @@ export namespace AskAI {
       console.error(Pick.label(Pick.named(run)) + (off !== null ? ": failed; calls go on with their fallbacks" : ": answers again"));
     }
     if (off !== null) {
-      DOWN.set(key, { ...off, until: Math.min(Date.now() + COOL, off.until ?? Infinity) });
+      DOWN.set(key, { ...off, until: Math.min(Date.now() + COOL, off.reset?.until ?? Infinity) });
     } else {
       DOWN.delete(key);
     }
