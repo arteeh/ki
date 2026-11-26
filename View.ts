@@ -20,7 +20,7 @@ export type Queued = { kind: Kind; text: string };
 
 // hop and from: another agent's message, the hop it is on and whose it is;
 // origin: the chat its chain of messages started in
-export type Pending = Queued & { images: string[]; act?: string; hop?: number; from?: string; origin?: string; lead?: number };
+export type Pending = Queued & { images: string[]; act?: string; hop?: number; from?: string; origin?: string; lead?: number; starter?: "goal-no" | "go-on" | "restarted" };
 
 type Of = { tool: string; apart: boolean };
 
@@ -118,7 +118,7 @@ export const MOVED = "(moved to the background after ";
 const MOVED_AS = new RegExp("\\" + MOVED + "\\d+ s as job (\\w+), pid ", "g");
 
 // what the view holds of one agent's chat
-const CHAT = ["busy", "wait", "importing", "limit", "queue", "sent", "sums", "again", "timers", "talk", "bg", "pick", "mcp", "parts", "turn", "nodes", "whole", "firsts", "open", "live", "minds"] as const;
+const CHAT = ["busy", "wait", "importing", "limit", "queue", "sent", "sums", "again", "timers", "talk", "bg", "pick", "mcp", "parts", "turn", "nodes", "whole", "firsts", "open", "live", "minds", "asides"] as const;
 type Chat = { [K in (typeof CHAT)[number]]: View[K] };
 
 // agent: the agent whose chat is wanted; on: whose chat the server sends
@@ -141,6 +141,7 @@ export type View = State & {
   open  : Map<string, boolean>;
   live  : Live[];
   minds : Map<number, string[]>;
+  asides: Map<number, string[]>;
   notes : string[];
   refused : { text: string; old: boolean } | null;
   tab   : string;
@@ -156,7 +157,8 @@ export type View = State & {
   reopen: () => void;
 };
 
-type Pack = { nodes?: Record<string, Node>; whole?: Record<string, Entry> };
+// notes: the app's notes, by the message they came before (#223)
+type Pack = { nodes?: Record<string, Node>; whole?: Record<string, Entry>; notes?: Record<string, string[]> };
 
 export type Server =
   | ({ $: "know" } & Pack)
@@ -362,6 +364,7 @@ export function view_new(agent: string): View {
     open      : new Map(),
     live      : [],
     minds     : new Map(),
+    asides    : new Map(),
     notes     : [],
     refused   : null,
     tab       : uuid(),
@@ -579,9 +582,10 @@ export function view_copy(v: View, from: number): Server[] {
       nodes[id + "+" + n] = node;
     }
   }
+  const notes = Object.fromEntries([...v.asides].filter(([at]) => at >= (parts[0]?.[0] ?? 0)));
   const { busy, wait, sums, again, importing, limit, queue, sent, pick, vendors, models, profiles, timers, mcp, talk, bg, thinking, skills } = v;
   const state = { busy, wait, sums, again, importing, limit, queue, sent, pick, vendors, models, profiles, timers, mcp, talk, bg, thinking, skills };
-  return [{ $: "state", agent: v.agent, ...state }, { $: "know", nodes, whole }, { $: "view", parts, turn: v.turn }, { $: "live", live: copy_live(v.live, thinking !== false) }];
+  return [{ $: "state", agent: v.agent, ...state }, { $: "know", nodes, whole, notes }, { $: "view", parts, turn: v.turn }, { $: "live", live: copy_live(v.live, thinking !== false) }];
 }
 
 // a copy of the open subagent page, as the messages a link sends for it,
@@ -735,7 +739,8 @@ function body_rows(v: View): Row[] {
     const rows = page_rows(v.page, v.thinking !== false, sub);
     return backgrounded(sub === undefined ? rows : running(rows, 0), v.bg);
   }
-  const rows = view_lines(view_rows(v, v.parts).flat());
+  const last = v.parts.at(-1);
+  const rows = view_lines([...view_rows(v, v.parts).flat(), ...aside_rows(v, last === undefined ? 0 : last[0] + last[1])]);
   return backgrounded(v.busy ? running(rows, v.turn) : rows, v.bg);
 }
 
@@ -806,6 +811,7 @@ export function view_sub(v: View): SubRow | undefined {
 function page_rows(page: Page, minds: boolean, sub: SubRow | undefined): Row[] {
   const log = (page.log ?? []).filter((e) => minds || e.kind !== "mind");
   const earlier: Row[] = page.from > 0 ? [{ $: "Cap", text: page.loading ? "Loading…" : "", earlier: true }] : [];
+  // a log's first line before 50 said how it runs (Memory.agent_role)
   const rows = log.flatMap((e, k) => (e.id === 0 && e.kind === "note" ? [] : [...(minds ? mind_rows(e) : []), ...sent_rows(e.id !== undefined && sub?.sent.includes(e.id) === true, whole_rows(e.id ?? null, e, log[k - 1]))]));
   return [...earlier, ...view_lines(rows), ...(page.done && page.log !== null ? [Cap("Done: its report is in the chat that spawned it.")] : [])];
 }
@@ -1018,6 +1024,9 @@ function view_learn(v: View, pack: Pack): void {
   }
   for (const [id, entry] of Object.entries(pack.whole ?? {})) {
     view_whole(v, Number(id), entry);
+  }
+  for (const [at, texts] of Object.entries(pack.notes ?? {})) {
+    v.asides.set(Number(at), texts);
   }
 }
 
@@ -1251,7 +1260,7 @@ function part_rows(v: View, id: number, n: number, drawn: Set<number>): Row[] {
     }
     drawn.add(at);
     const before = v.firsts.get(at - 1) ?? at - 1;
-    return [...(shown ? mind_rows(entry) : []), ...sent_rows(v.sent.includes(at), whole_rows(at, entry, v.whole.get(before))), ...after];
+    return [...aside_rows(v, at), ...(shown ? mind_rows(entry) : []), ...sent_rows(v.sent.includes(at), whole_rows(at, entry, v.whole.get(before))), ...after];
   }
   if (n === 1 || v.open.get(key) !== true) {
     const msgs = n - [...v.firsts.keys()].filter((k) => k >= id && k < id + n).length + (drawn.has(v.firsts.get(id) ?? id) ? 0 : v.firsts.has(id) ? 1 : 0);
@@ -1263,7 +1272,7 @@ function part_rows(v: View, id: number, n: number, drawn: Set<number>): Row[] {
   return msgs === 0 ? rows : [{ $: "Box", id, n, msgs, text: GLYPH.open + " " + msgs + "x · fold", rows }];
 }
 
-const ROWS  = new WeakMap<Entry | Node, Row[]>();
+const ROWS  = new WeakMap<Entry | Node | string[], Row[]>();
 const APART = new WeakMap<Entry, Row[]>();
 const MINDS = new WeakMap<Entry, Row[]>();
 
@@ -1273,6 +1282,17 @@ function mind_rows(entry: Entry): Row[] {
   if (entry.mind !== undefined) {
     MINDS.set(entry, rows);
   }
+  return rows;
+}
+
+// the app's notes that came before message at, made once (#223)
+function aside_rows(v: View, at: number): Row[] {
+  const texts = v.asides.get(at);
+  if (texts === undefined) {
+    return [];
+  }
+  const rows = ROWS.get(texts) ?? texts.flatMap((text) => entry_rows(null, "note", text));
+  ROWS.set(texts, rows);
   return rows;
 }
 

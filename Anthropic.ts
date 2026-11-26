@@ -15,7 +15,7 @@ type Content = {
   tool_use_id? : string;
 };
 
-type Usage = { input_tokens?: unknown; cache_read_input_tokens?: unknown; cache_creation_input_tokens?: unknown; speed?: unknown };
+type Usage = { input_tokens?: unknown; cache_read_input_tokens?: unknown; cache_creation_input_tokens?: unknown };
 
 type Delta = { type: string; thinking?: string; text?: string; signature?: string; partial_json?: string; citation?: unknown };
 
@@ -38,7 +38,6 @@ type State = {
   json      : string[];
   stop      : string;
   why       : { explanation?: string | null } | null;
-  speed     : string;
   error     : { type: string; message: string } | null;
   used      : { read: number; write: number; input: number } | null;
   docs      : Doc[];
@@ -147,7 +146,6 @@ export namespace Anthropic {
   export function read(st: State, ev: Event, on: Emit): boolean {
     switch (ev.type) {
       case "message_start": {
-        Anthropic.usage(st, ev.message?.usage ?? {});
         st.used = Anthropic.used(ev.message?.usage ?? {});
         return false;
       }
@@ -165,7 +163,6 @@ export namespace Anthropic {
         st.stop = ev.delta?.stop_reason ?? st.stop;
         st.why  = ev.delta?.stop_details ?? st.why;
         st.container = ev.delta?.container?.id ?? st.container;
-        Anthropic.usage(st, ev.usage ?? {});
         return false;
       }
       case "error": {
@@ -179,10 +176,6 @@ export namespace Anthropic {
   export function used(u: Usage): State["used"] {
     const n = (x: unknown) => (typeof x === "number" ? x : 0);
     return typeof u.input_tokens === "number" ? { read: n(u.cache_read_input_tokens), write: n(u.cache_creation_input_tokens), input: u.input_tokens } : null;
-  }
-
-  export function usage(st: State, u: Usage): void {
-    st.speed = u.speed === undefined ? st.speed : u.speed === "fast" ? "fast" : "slow";
   }
 
   export function delta(st: State, k: number, delta: Delta): void {
@@ -251,9 +244,7 @@ export namespace Anthropic {
     const out = st.blocks.filter((b) => b.type !== "text" || b.text);
     const ran = new Set(out.map((b) => b.tool_use_id));
     const open = out.some((b) => b.type === "server_tool_use" && !ran.has(b.id));
-    const slow = ask.speed === "fast" && st.speed !== "fast";
-    const note = slow ? "ran at " + st.speed + " speed" : "";
-    const step: Step = { out, uses, entries: Anthropic.entries(out, st.docs), stop: "done", why: "", note, open, container: st.container ?? undefined };
+    const step: Step = { out, uses, entries: Anthropic.entries(out, st.docs), stop: "done", why: "", open, container: st.container ?? undefined };
     if (st.error !== null) {
       const stop = st.error.type === "rate_limit_error" ? "limit" : ["overloaded_error", "api_error"].includes(st.error.type) ? "busy" : "fail";
       return { ...step, stop, why: st.error.type + ": " + st.error.message };
@@ -384,7 +375,7 @@ export namespace Anthropic {
     url     : "https://api.anthropic.com/v1/messages",
     headers : Anthropic.headers,
     body    : Anthropic.body,
-    start   : (_ask, items) => ({ blocks: [], json: [], stop: "", why: null, speed: "slow", error: null, used: null, docs: Anthropic.docs(items.flatMap((item) => (item.$ === "Turn" ? item.out : []))), container: null }),
+    start   : (_ask, items) => ({ blocks: [], json: [], stop: "", why: null, error: null, used: null, docs: Anthropic.docs(items.flatMap((item) => (item.$ === "Turn" ? item.out : []))), container: null }),
     read    : Anthropic.read,
     begun   : (ev) => ev.type === "message_start",
     step    : Anthropic.step,

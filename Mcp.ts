@@ -23,14 +23,11 @@ type Started = {
   kept  : { specs: Spec[]; at: number } | null;
 };
 
-// left: its tools left out (listed), lefts: what each agent was told of
+// left: its tools left out (listed)
 // that
 type Told = {
   said  : string | null;
-  shown : boolean;
-  heard : Map<string, string | null>;
   left  : string;
-  lefts : Map<string, string>;
 };
 
 // turns: how many running turns hold it (#142)
@@ -91,7 +88,7 @@ export namespace Mcp {
     }
     for (const conf of want.values()) {
       if (!servers.all.has(conf.name)) {
-        servers.all.set(conf.name, { conf, up: null, fail: null, link: null, names: new Map(), stale: false, kept: null, said: null, shown: false, heard: new Map(), left: "", lefts: new Map(), calls: 0, turns: 0, gone: false });
+        servers.all.set(conf.name, { conf, up: null, fail: null, link: null, names: new Map(), stale: false, kept: null, said: null, left: "", calls: 0, turns: 0, gone: false });
       }
     }
   }
@@ -141,16 +138,7 @@ export namespace Mcp {
   // some waits only for `now`, a 0 ms timer, which one already up beats
   export async function tools(servers: Servers, s: Server, wait: Promise<null>): Promise<Spec[]> {
     const got = await Promise.race([Mcp.start(servers, s), wait]);
-    return got === null ? Mcp.starting(servers, s) : typeof got === "string" ? Mcp.kept(s) ?? [] : got;
-  }
-
-  // the model is told only of tools left out
-  export function starting(servers: Servers, s: Server): Spec[] {
-    const kept = Mcp.kept(s);
-    if (kept === null && s.said === null) {
-      Mcp.tell(servers, s, "is still starting; its tools are left out until it is up", false);
-    }
-    return kept ?? [];
+    return got === null || typeof got === "string" ? Mcp.kept(s) ?? [] : got;
   }
 
   // the tools last listed within KEEP_MS, kept a while more
@@ -171,34 +159,8 @@ export namespace Mcp {
     }
   }
 
-  export function heard(servers: Servers, off: string[], who: string, viewed = false): string[] {
-    const notes: string[] = [];
-    for (const s of servers.all.values()) {
-      if (s.gone || off.includes(s.conf.name) || s.said === (s.heard.get(who) ?? null) || (viewed && !s.shown)) {
-        continue;
-      }
-      s.heard.set(who, s.said);
-      notes.push(s.said ?? "MCP server " + s.conf.name + " works again.");
-    }
-    for (const s of servers.all.values()) {
-      if (s.gone || off.includes(s.conf.name) || s.left === (s.lefts.get(who) ?? "")) {
-        continue;
-      }
-      s.lefts.set(who, s.left);
-      notes.push(...(s.left === "" ? [] : [Mcp.left_note(s)]));
-    }
-    return notes;
-  }
-
   export function left_note(s: Server): string {
     return "MCP server " + s.conf.name + " has tools left out: " + s.left + ".";
-  }
-
-  export function forget(servers: Servers, who: string): void {
-    servers.all.forEach((s) => {
-      s.heard.delete(who);
-      s.lefts.delete(who);
-    });
   }
 
   export async function start(servers: Servers, s: Server): Promise<Spec[] | string> {
@@ -206,7 +168,7 @@ export namespace Mcp {
       Mcp.close(s);
       s.fail = null;
       const why = "can't run: device " + s.conf.device + " isn't open";
-      Mcp.tell(servers, s, why + (Mcp.kept(s) === null ? "; its tools are left out until it is" : "; its tools stay listed, but calls fail until it is"), false);
+      Mcp.tell(servers, s, why + (Mcp.kept(s) === null ? "; its tools are left out until it is" : "; its tools stay listed, but calls fail until it is"));
       return why;
     }
     if (s.link !== null && s.link.dead() !== null) {
@@ -229,7 +191,7 @@ export namespace Mcp {
     if (typeof got === "string") {
       Mcp.close(s);
       s.fail = { why: got, till: Date.now() + RETRY_FAILED_START_MS };
-      Mcp.tell(servers, s, got + (Mcp.kept(s) === null ? "; its tools are left out until it starts" : "; its tools stay listed, but calls fail until it starts"), true);
+      Mcp.tell(servers, s, got + (Mcp.kept(s) === null ? "; its tools are left out until it starts" : "; its tools stay listed, but calls fail until it starts"));
       return got;
     }
     s.fail = null;
@@ -243,7 +205,7 @@ export namespace Mcp {
     const changed = () => (s.stale = true);
     let up = false;
     let link: Link | null = null;
-    const died = (why: string) => up && s.link === link && Mcp.tell(servers, s, why + "; the next call starts it again", false);
+    const died = (why: string) => up && s.link === link && Mcp.tell(servers, s, why + "; the next call starts it again");
     try {
       link = s.link = Mcp.device(s.conf, servers.run, changed, died);
       await link.ask("initialize", INIT, timer);
@@ -312,14 +274,11 @@ export namespace Mcp {
     return { ...obj, type: "object", properties: rec(obj.properties) ? obj.properties : {} };
   }
 
-  export function tell(servers: Servers, s: Server, why: string, show: boolean): void {
+  export function tell(servers: Servers, s: Server, why: string): void {
     const text = "MCP server " + s.conf.name + " " + why + ".";
     if (text !== s.said) {
       s.said = text;
-      s.shown = show;
-      if (show) {
-        Mcp.say(servers, s, text);
-      }
+      Mcp.say(servers, s, text);
     }
   }
 

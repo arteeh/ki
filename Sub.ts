@@ -1,6 +1,6 @@
 import type { Block, End, Parked, Say } from "./AskAI.ts";
 import * as config from "./Config.ts";
-import { list as items, rec, text_of } from "./Json.ts";
+import { get, list as items, rec, text_of } from "./Json.ts";
 import * as Names from "./Names.ts";
 import { Pick } from "./Pick.ts";
 import type { Run } from "./Run.ts";
@@ -14,6 +14,13 @@ export type Role = { model: string | null; effort: string | null };
 
 export type Spawn = { task: string; role: Role; memory: boolean; mcp: boolean };
 
+// how it runs, as its spawn had it (Memory.agent_role)
+type Spawned = Omit<Spawn, "task">;
+
+// starts: the app's own message that starts its turn (restarted.md), sent
+// in that turn only, never kept in its log (#223)
+export type Told = Say & { starts?: true };
+
 // doing: what it does now, since at (a tool's name, thinking, a usage limit)
 // used: the tokens of its last request, when its log had used_at bytes of
 // the bytes it has now; told: its spawner knows of the usage limit it waits
@@ -26,7 +33,7 @@ export type Sub<M> = {
   view    : Block[];
   replies : string[];
   why     : string | null;
-  run     : Run<Say, M>;
+  run     : Run<Told, M>;
   doing   : string;
   at      : number;
   used    : number | null;
@@ -42,13 +49,6 @@ export type How = { model: string; effort: string; pick: Pick | null };
 // queue: the messages it hasn't taken yet; sent: its log's ones it took
 // but hasn't answered; limit: the usage limit it waits for, for its page
 export type Row = How & { name: string; face: string; task: string; meter: Talk | null; doing: string; at: number; queue: string[]; sent: number[]; limit: Parked | null };
-
-const NOTE = "subagent";
-const ON   = " on ";
-const AT   = " at effort ";
-const BARE = " without view";
-const NO_MCP = " without MCP tools";
-const ROLE = new RegExp("^" + NOTE + "(?:" + ON + "(\\S+))?(?:" + AT + "(\\S+))?(" + BARE + ")?(" + NO_MCP + ")?$");
 
 const TASK_SHOWN = 120;
 
@@ -102,14 +102,16 @@ export namespace Sub {
     return role.effort === null || model === undefined || Pick.offers(model, role.effort) ? null : Pick.no_effort(model, role.effort);
   }
 
-  // its log's first line, which says how it runs
-  export function note(role: Role, memory: boolean, mcp: boolean): string {
-    return NOTE + (role.model === null ? "" : ON + role.model) + (role.effort === null ? "" : AT + role.effort) + (memory ? "" : BARE) + (mcp ? "" : NO_MCP);
+  export function old_role(note: string): Spawned | null {
+    const m = /^subagent(?: on (\S+))?(?: at effort (\S+))?( without view)?( without MCP tools)?$/.exec(note);
+    return m === null ? null : { role: { model: m[1] ?? null, effort: m[2] ?? null }, memory: m[3] === undefined, mcp: m[4] === undefined };
   }
 
-  export function role(note: string): { role: Role; memory: boolean; mcp: boolean } | null {
-    const m = ROLE.exec(note);
-    return m === null ? null : { role: { model: m[1] ?? null, effort: m[2] ?? null }, memory: m[3] === undefined, mcp: m[4] === undefined };
+  export function role(x: unknown): Spawned | null {
+    const [role, memory, mcp] = [get(x, "role"), get(x, "memory"), get(x, "mcp")];
+    const [model, effort] = [get(role, "model"), get(role, "effort")];
+    const ok = (y: unknown): y is string | null => y === null || typeof y === "string";
+    return ok(model) && ok(effort) && typeof memory === "boolean" && typeof mcp === "boolean" ? { role: { model, effort }, memory, mcp } : null;
   }
 
   // the spawner's pick, with the task's model and effort; an effort its

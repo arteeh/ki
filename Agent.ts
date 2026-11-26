@@ -48,7 +48,6 @@ export type Step = {
   entries    : Entry[];
   stop       : "done" | "tools" | "again" | "busy" | "limit" | "down" | "lost" | "fail";
   why        : string;
-  note       : string;
   off?       : boolean;
   refusal?   : Refusal;
   until?     : number;
@@ -65,7 +64,7 @@ export type Emit = (kind: Kind, text: string, fresh?: boolean, at?: At) => void;
 
 type Part = { type: string; text?: string; mimeType?: string; data?: string };
 
-type Listed = { tools: { name: string; description: string; inputSchema: object }[]; notes?: unknown };
+type Listed = { tools: { name: string; description: string; inputSchema: object }[] };
 
 type Called = { content: Part[]; isError?: boolean };
 
@@ -143,8 +142,8 @@ export namespace Agent {
     if (!key && !wire.auth) {
       throw new Error("no API key: set " + wire.key.toUpperCase() + "_API_KEY");
     }
-    const { tools, notes } = await Agent.server(run);
-    const parts = [...Agent.noted(ask.blocks, notes), ...(ask.handoff ?? [])].filter((b) => b.text !== "");
+    const tools = await Agent.server(run);
+    const parts = [...ask.blocks, ...(ask.handoff ?? [])].filter((b) => b.text !== "");
     const items: Item[] = [{ $: "User", parts }];
     while (!signal.aborted) {
       const step = await Agent.step(wire, run, key, (max) => wire.body(ask, items, tools, max), items);
@@ -161,7 +160,6 @@ export namespace Agent {
         return;
       }
       items.push({ $: "Turn", out: step.out, open: step.open, container: step.container });
-      end.note = step.note || end.note;
       if (step.stop === "again") {
         continue;
       }
@@ -501,7 +499,7 @@ export namespace Agent {
       const done = e.at === undefined ? [] : ended.filter((x) => x.of === e.at?.item);
       return done.length > 0 ? done : e.text.trim() ? [{ kind: e.kind, text: e.text.trim() + mark }] : [];
     });
-    return { out: [], uses: [], entries, stop, why, note: "" };
+    return { out: [], uses: [], entries, stop, why };
   }
 
   export async function* events(stream: ReadableStream<Uint8Array>) {
@@ -536,30 +534,12 @@ export namespace Agent {
     }
   }
 
-  // the tools' notes are for this request: Ki counts them heard as it
-  // gives them (#190)
-  export async function server(run: Doing): Promise<{ tools: Tool[]; notes: string[] }> {
-    if (!run.ask.server) {
-      return { tools: [], notes: [] };
+  export async function server(run: Doing): Promise<Tool[]> {
+    if (run.ask.server === "") {
+      return [];
     }
-    const list = await Agent.rpc(run.ask.server, run.abort.signal, "tools/list", { notes: true });
-    const tools = list.tools.map((t) => ({ name: t.name, info: t.description, schema: t.inputSchema }));
-    return { tools, notes: Agent.notes_of(list) };
-  }
-
-  // the notes alone, for a caller that lists the tools itself (ClaudeSub)
-  export async function notes(server: string, signal: AbortSignal): Promise<string[]> {
-    return Agent.notes_of(await Agent.rpc(server, signal, "tools/list", { notes: true }));
-  }
-
-  export function notes_of(list: Listed): string[] {
-    return Array.isArray(list.notes) ? list.notes.map(String) : [];
-  }
-
-  // the request's blocks with the tools' notes before its last
-  export function noted(blocks: Block[], notes: string[]): Block[] {
-    const noted = notes.length === 0 ? [] : [{ text: notes.map((note) => "Note: " + note + "\n").join("") + "\n", mark: false }];
-    return [...blocks.slice(0, -1), ...noted, ...blocks.slice(-1)];
+    const list = await Agent.rpc(run.ask.server, run.abort.signal, "tools/list", {});
+    return list.tools.map((t) => ({ name: t.name, info: t.description, schema: t.inputSchema }));
   }
 
   export async function call(run: Doing, name: string, input: unknown): Promise<Out> {

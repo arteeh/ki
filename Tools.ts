@@ -288,18 +288,15 @@ export namespace Tools {
         const protocolVersion = params.protocolVersion ?? "2025-06-18";
         return { protocolVersion, capabilities: { tools: {} }, serverInfo: { name: "ki", version: "1" } };
       }
-      // notes only for a caller that puts them in the model's request
-      // (Agent.notes), heard only then: Claude Code drops them (#190)
       case "tools/list": {
         const bare = tools.seats.get(who)?.mcp === false;
         const all = bare ? [] : await Mcp.list(tools.mcp, Tools.held(tools, who));
         const theirs = all.filter((t) => t.name.length <= NAME_MOST - prefix.length);
         const list = [...Tools.list(tools.seats.get(who)?.subs === null), ...theirs].map((t) => ({ name: t.name, description: t.info, inputSchema: t.schema }));
-        if (params.notes !== true || bare) {
-          return { tools: list };
+        if (!bare) {
+          Tools.shortened(tools, who, all.filter((t) => !theirs.includes(t)).map((t) => t.name), prefix);
         }
-        const short = Tools.shortened(tools, who, all.filter((t) => !theirs.includes(t)).map((t) => t.name), prefix);
-        return { tools: list, notes: [...Mcp.heard(tools.mcp, Tools.off(tools), who), ...short] };
+        return { tools: list };
       }
       case "tools/call": {
         const name = String(params.name);
@@ -319,28 +316,24 @@ export namespace Tools {
     return null;
   }
 
-  // the agent is told of the tools its turn leaves out for a name too long
-  // with the caller's prefix, when they change: in the turn's request, and
-  // in its chat
-  export function shortened(tools: Tools, who: string, names: string[], prefix: string): string[] {
+  // the chat shows which tool names are too long with the caller's prefix
+  export function shortened(tools: Tools, who: string, names: string[], prefix: string): void {
     const now = names.join(", ");
     if (now === (tools.short.get(who) ?? "")) {
-      return [];
+      return;
     }
     tools.short.set(who, now);
     if (now === "") {
-      return [];
+      return;
     }
     const note = "MCP tools left out, their names over the " + (NAME_MOST - prefix.length) + " characters this model takes (" + NAME_MOST + ", with " + prefix + " before each): " + now + ".";
     tools.seats.get(who)?.note(note);
-    return [note];
   }
 
   // an agent gone: its seat, and what it was told
   export function unseat(tools: Tools, who: string): void {
     tools.seats.delete(who);
     tools.short.delete(who);
-    Mcp.forget(tools.mcp, who);
   }
 
   // the same for every agent, so one cached copy serves them all, and the

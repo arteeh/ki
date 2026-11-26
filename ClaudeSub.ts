@@ -424,10 +424,7 @@ export namespace ClaudeSub {
           if (signal.aborted) {
             return {};
           }
-          // Claude Code passes on no note of its tools' list: Ki gives them
-          // in the first message (#190)
-          const notes = ask.server === "" ? [] : await Agent.notes(ClaudeSub.url(ask.server), signal);
-          await ClaudeSub.first_message(code, ask, notes);
+          await ClaudeSub.first_message(code, ask);
         } else {
           await ClaudeSub.go_on(code, ask, lead);
         }
@@ -484,9 +481,9 @@ export namespace ClaudeSub {
 
   // a new Claude Code's message: the call's blocks, the turn's progress
   // before it and every message steered into the call so far (AskAI.steered)
-  export async function first_message(code: Code, ask: Ask, notes: string[]): Promise<void> {
+  export async function first_message(code: Code, ask: Ask): Promise<void> {
     await AskAI.steered(ask);
-    const blocks = Agent.noted(ask.blocks, notes).filter((b) => b.text !== "");
+    const blocks = ask.blocks.filter((b) => b.text !== "");
     code.box.put([...blocks, ...(ask.handoff ?? []), ...(ask.taken ?? [])], blocks.slice(0, -1).findLastIndex((b) => b.mark));
   }
 

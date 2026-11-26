@@ -362,7 +362,7 @@ export namespace ChatGPT {
     start   : (ask, items) => ({ ...OpenAI.wire.start(ask, items), items: [] }),
     read    : (st, ev, on) => ChatGPT.read(st, ev, on),
     begun   : (ev) => ev.type === "response.output_item.added",
-    step    : (st, ask) => ({ ...OpenAI.step(st, ask), note: "" }),
+    step    : OpenAI.step,
     refusal : (res, text) => ChatGPT.refusal(res, text),
     reset   : (res, text) => ChatGPT.reset(res, text),
   };

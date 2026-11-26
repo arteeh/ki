@@ -87,7 +87,6 @@ export type End = {
   ok     : boolean;
   text   : string;
   why?   : string;
-  note?  : string;
   stop?  : "fail" | "lost" | "down";
   off?   : boolean;
   acted? : boolean;

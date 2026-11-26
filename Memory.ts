@@ -4,7 +4,7 @@ import { clip_page, text_pages } from "./Clip.ts";
 import * as config from "./Config.ts";
 import { Disk } from "./Disk.ts";
 import { err_code, err_why } from "./Err.ts";
-import { rec } from "./Json.ts";
+import { get, rec } from "./Json.ts";
 import * as Names from "./Names.ts";
 import { Pick } from "./Pick.ts";
 import * as Prompts from "./Prompts.ts";
@@ -20,8 +20,9 @@ export type Root = Msg & { i: number; size: number; date: string };
 // model, nor counts it in a size (#204); lead: the user's first word
 // started a skill or set the goal, and so many characters of the skill's
 // came before the message as written, which is all the chat page shows
-// (#203)
-export type Msg = { kind: Kind; text: string; date?: string; images?: string[]; imported?: boolean; line?: string; more?: boolean; page?: boolean; act?: string; from?: string; copy?: number; mind?: string; lead?: number } & Pair;
+// (#203); aside: a subagent's note, for its page only: nothing shows it
+// the model, nor counts it in a size (#223)
+export type Msg = { kind: Kind; text: string; date?: string; images?: string[]; imported?: boolean; line?: string; more?: boolean; page?: boolean; act?: string; from?: string; copy?: number; mind?: string; lead?: number; aside?: true } & Pair;
 
 // result: a tool call's message holds its result too, after the newline
 // at result in its whole text (#188)
@@ -54,12 +55,15 @@ type Rec = { i?: number; l?: number; act?: string; ans?: object };
 
 type Recs = { main: Root; tree: { text: string } };
 
+// notes: the app's notes, by the message they came before, for the chat
+// page only: no summary, view or size holds them (#223)
 type Logs = {
   dir    : string;
   fds    : Map<string, number>;
   count  : number;
   open   : number;
   ends   : Record<Stream, End>;
+  notes  : Map<number, string[]>;
 };
 
 // leader: each turn sees lines of the other agents' memories, this many (#168)
@@ -145,6 +149,7 @@ const MEDIA_DIR = "/docs/media/";
 // a subagent's log, in its spawner's folder (#116)
 const AGENTS = "/docs/agent/";
 const DROPPED = ".dropped.json";
+const NOTES = "/notes.jsonl";
 const AGENT_LOGS = new Map<string, number>();
 
 const PAGE_MAX = 4 * 2 ** 20;
@@ -155,7 +160,7 @@ export namespace Memory {
   export function load(dir: string, share: Memory["share"], acted: Memory["acted"] = () => {}): Memory {
     fs.mkdirSync(dir, { recursive: true });
     const mem: Memory = {
-      dir, fds: new Map(), count: 0, open: 0, pick: null, goal: null, talk: null, leader: false, lines: LINES, talked: new Map(), used: null, used_at: 0, work: [], timers: [], hop: 0, origin: null, queue: [], held: [], nodes: new Map(), ready: [[], []], ends: { main: [0, 0], tree: [0, 0] },
+      dir, fds: new Map(), count: 0, open: 0, notes: new Map(), pick: null, goal: null, talk: null, leader: false, lines: LINES, talked: new Map(), used: null, used_at: 0, work: [], timers: [], hop: 0, origin: null, queue: [], held: [], nodes: new Map(), ready: [[], []], ends: { main: [0, 0], tree: [0, 0] },
       view: { parts: [], size: 0, batch: false, high: VIEW_HIGH }, seen: { parts: [], size: 0, batch: false, high: config.COMPACTOR_CONTEXT },
       busy: new Map(), sides: new Map(), calls: new Map(), whole: new Map(), hold: [null, "paused"], done: false, wait: new Set(), share, acted, again: null,
     };
@@ -181,6 +186,14 @@ export namespace Memory {
       mem.count -= 1;
     }
     mem.used_at = saved?.used_at ?? mem.count;
+    if (fs.existsSync(dir + NOTES)) {
+      for (const note of fs.readFileSync(dir + NOTES, "utf8").split("\n").map((line) => Memory.parse(line, dir + NOTES))) {
+        const [at, text] = [get(note, "at"), get(note, "text")];
+        if (typeof at === "number" && typeof text === "string") {
+          mem.notes.set(at, [...(mem.notes.get(at) ?? []), text]);
+        }
+      }
+    }
     Memory.open(mem, mem.view, saved);
     Memory.open(mem, mem.seen, saved?.seen ?? saved);
     Memory.roots(mem.count).flatMap((part) => Memory.todo(mem, part)).forEach((part) => Memory.ready(mem, part, true));
@@ -395,6 +408,14 @@ export namespace Memory {
       return { text: m.text.slice(m.lead), cmd: true };
     }
     return m.result === undefined ? { text: m.text } : { text: m.text.slice(0, m.result), echo: m.text.slice(m.result + 1) };
+  }
+
+  // a note of the app's for the chat page, before the message to come
+  export function note(mem: Memory, text: string): number {
+    const at = mem.count;
+    Memory.append(mem.dir + NOTES, [JSON.stringify({ at, text })]);
+    mem.notes.set(at, [...(mem.notes.get(at) ?? []), text]);
+    return at;
   }
 
   export function message(mem: Memory, i: number): Root | null {
@@ -1304,6 +1325,24 @@ export namespace Memory {
     }
   }
 
+  // how a subagent's spawn had it run: its model, effort, view and MCP tools
+  // (Sub.role), which it runs on again after a restart
+  export function agent_role(mem: Memory, name: string, role?: object): unknown {
+    const file = mem.dir + AGENTS + name + ".role.json";
+    if (!/^[A-Za-z]+$/.test(name)) {
+      return null;
+    }
+    if (role !== undefined) {
+      write_whole(file, JSON.stringify(role) + "\n");
+      return role;
+    }
+    try {
+      return JSON.parse(fs.readFileSync(file, "utf8")) as unknown;
+    } catch {
+      return null;
+    }
+  }
+
   export function agent(mem: Memory, name: string): Root[] | null {
     const file = mem.dir + AGENTS + name + ".jsonl";
     return /^[A-Za-z]+$/.test(name) && fs.existsSync(file) ? Memory.file(file) : null;
@@ -1327,7 +1366,7 @@ export namespace Memory {
     return name;
   }
 
-  export function agent_push(mem: Memory, name: string, kind: Kind, text: string, pair: Pair & { mind?: string } = {}): Root {
+  export function agent_push(mem: Memory, name: string, kind: Kind, text: string, pair: Pair & { mind?: string; aside?: true } = {}): Root {
     const n = AGENT_LOGS.get(mem.dir + name) ?? Memory.agent(mem, name)?.length ?? 0;
     const root = Memory.root(n, { kind, text, ...pair });
     Memory.append(mem.dir + AGENTS + name + ".jsonl", [JSON.stringify(root)]);
@@ -1369,7 +1408,7 @@ export namespace Memory {
 
   // dated: each message with when it was sent, as a zoom shows it (#217)
   export function agent_show(mem: Memory, name: string, dated = false): string {
-    return Memory.agent(mem, name)?.map((root) => root.i + (dated ? " · " + Memory.when(root.date) : "") + "|" + Memory.show(root)).join("\n\n") ?? "No agent " + name + ".";
+    return Memory.agent(mem, name)?.filter((root) => root.aside !== true && (root.i !== 0 || root.kind !== "note")).map((root) => root.i + (dated ? " · " + Memory.when(root.date) : "") + "|" + Memory.show(root)).join("\n\n") ?? "No agent " + name + ".";
   }
 
 }
