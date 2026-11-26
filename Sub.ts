@@ -113,9 +113,10 @@ export namespace Sub {
   }
 
   // the spawner's pick, with the task's model and effort; an effort its
-  // model no longer has, its model's default
+  // model no longer has, its model's default; a model the task names runs
+  // alone, without the spawner's profile and its fallbacks
   export function pick(base: Pick, role: Role, name: string): Pick {
-    const given = role.model === null ? base : Pick.to_model(base, role.model, config.OFFER.vendors, config.OFFER);
+    const given = role.model === null ? base : Pick.to_model(Sub.alone(base), role.model, config.OFFER.vendors, config.OFFER);
     if (given === null) {
       throw new Error(name + "'s model " + role.model + " is no longer offered; spawn another subagent.");
     }
@@ -134,8 +135,15 @@ export namespace Sub {
     return "[" + sub.name + "]\n" + (sub.replies.join("\n\n").trim() || "(no reply)");
   }
 
+  // a pick saved before 50 for a model the task named may hold the
+  // spawner's profile, which is never its own
   export function how(role: Role, pick: Pick | null): How {
-    return { model: pick?.model ?? role.model ?? "model not recorded", effort: pick?.effort ?? role.effort ?? "", pick };
+    const shown = pick !== null && role.model !== null ? Sub.alone(pick) : pick;
+    return { model: pick?.model ?? role.model ?? "model not recorded", effort: pick?.effort ?? role.effort ?? "", pick: shown };
+  }
+
+  export function alone({ vendor, model, effort, speed }: Pick): Pick {
+    return { vendor, model, effort, speed };
   }
 
   export function row<M>(sub: Sub<M>, pick: Pick | null, meter: Talk | null, sent: number[]): Row {
