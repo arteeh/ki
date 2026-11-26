@@ -521,8 +521,14 @@ function foot(): void {
   document.documentElement.style.setProperty("--foot", $("footer").getBoundingClientRect().height + "px");
   const log = $("#log");
   if (!log.hidden && SCROLL.end) {
-    const high = log.getBoundingClientRect().height - (parseFloat(log.style.getPropertyValue("--whole")) || 0);
-    log.style.setProperty("--whole", Math.ceil(high) - high + "px");
+    // within a layout unit (1/64 px) of whole is whole: at a fractional
+    // zoom the height measures back a little off each time (#225)
+    const high = log.getBoundingClientRect().height;
+    const off = Math.ceil(high) - high;
+    if (off > 1 / 64 && off < 1 - 1 / 64) {
+      const whole = (parseFloat(log.style.getPropertyValue("--whole")) || 0) + off;
+      log.style.setProperty("--whole", (whole < 1 ? whole : whole - 1) + "px");
+    }
   }
 }
 
