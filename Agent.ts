@@ -56,6 +56,7 @@ export type Step = {
   quota?     : boolean;
   open?      : boolean;
   container? : string;
+  served_speed?: string;
 };
 
 export type Refusal = { why: string; say: string; until?: number };
@@ -160,6 +161,7 @@ export namespace Agent {
         return;
       }
       items.push({ $: "Turn", out: step.out, open: step.open, container: step.container });
+      end.served_speed = step.served_speed ?? end.served_speed;
       if (step.stop === "again") {
         continue;
       }

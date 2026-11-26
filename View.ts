@@ -37,7 +37,7 @@ export type Mate = { id: string; name: string; about: string; picture: string; u
 
 // a subagent's page: its log as loaded (from: how many of its first
 // entries aren't yet), what it says now, whether it is done (#116)
-type Logged = Entry & { id?: number };
+type Logged = Entry & { id?: number; role?: true };
 
 // how: how it runs or ran, as the server said (#180)
 type Page = { name: string; log: Logged[] | null; live: Live[]; from: number; loading: boolean; done: boolean; how: How | null };
@@ -582,7 +582,9 @@ export function view_copy(v: View, from: number): Server[] {
       nodes[id + "+" + n] = node;
     }
   }
-  const notes = Object.fromEntries([...v.asides].filter(([at]) => at >= (parts[0]?.[0] ?? 0)));
+  const last = parts.at(-1);
+  const end = last === undefined ? 0 : last[0] + last[1];
+  const notes = Object.fromEntries([...v.asides].filter(([at]) => at === end || Object.hasOwn(whole, at)));
   const { busy, wait, sums, again, importing, limit, queue, sent, pick, vendors, models, profiles, timers, mcp, talk, bg, thinking, skills } = v;
   const state = { busy, wait, sums, again, importing, limit, queue, sent, pick, vendors, models, profiles, timers, mcp, talk, bg, thinking, skills };
   return [{ $: "state", agent: v.agent, ...state }, { $: "know", nodes, whole, notes }, { $: "view", parts, turn: v.turn }, { $: "live", live: copy_live(v.live, thinking !== false) }];
@@ -809,10 +811,9 @@ export function view_sub(v: View): SubRow | undefined {
 // a subagent's page: its log, earlier entries as it scrolls up (#143),
 // the messages it took but hasn't answered marked (#144)
 function page_rows(page: Page, minds: boolean, sub: SubRow | undefined): Row[] {
-  const log = (page.log ?? []).filter((e) => minds || e.kind !== "mind");
+  const log = (page.log ?? []).filter((e) => e.role !== true && (minds || e.kind !== "mind"));
   const earlier: Row[] = page.from > 0 ? [{ $: "Cap", text: page.loading ? "Loading…" : "", earlier: true }] : [];
-  // a log's first line before 50 said how it runs (Memory.agent_role)
-  const rows = log.flatMap((e, k) => (e.id === 0 && e.kind === "note" ? [] : [...(minds ? mind_rows(e) : []), ...sent_rows(e.id !== undefined && sub?.sent.includes(e.id) === true, whole_rows(e.id ?? null, e, log[k - 1]))]));
+  const rows = log.flatMap((e, k) => [...(minds ? mind_rows(e) : []), ...sent_rows(e.id !== undefined && sub?.sent.includes(e.id) === true, whole_rows(e.id ?? null, e, log[k - 1]))]);
   return [...earlier, ...view_lines(rows), ...(page.done && page.log !== null ? [Cap("Done: its report is in the chat that spawned it.")] : [])];
 }
 

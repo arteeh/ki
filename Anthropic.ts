@@ -15,7 +15,7 @@ type Content = {
   tool_use_id? : string;
 };
 
-type Usage = { input_tokens?: unknown; cache_read_input_tokens?: unknown; cache_creation_input_tokens?: unknown };
+type Usage = { input_tokens?: unknown; cache_read_input_tokens?: unknown; cache_creation_input_tokens?: unknown; speed?: "standard" | "fast" | null };
 
 type Delta = { type: string; thinking?: string; text?: string; signature?: string; partial_json?: string; citation?: unknown };
 
@@ -37,6 +37,7 @@ type State = {
   blocks    : Content[];
   json      : string[];
   stop      : string;
+  speed?    : Usage["speed"];
   why       : { explanation?: string | null } | null;
   error     : { type: string; message: string } | null;
   used      : { read: number; write: number; input: number } | null;
@@ -146,6 +147,7 @@ export namespace Anthropic {
   export function read(st: State, ev: Event, on: Emit): boolean {
     switch (ev.type) {
       case "message_start": {
+        st.speed = ev.message?.usage?.speed;
         st.used = Anthropic.used(ev.message?.usage ?? {});
         return false;
       }
@@ -160,6 +162,7 @@ export namespace Anthropic {
         return false;
       }
       case "message_delta": {
+        st.speed = ev.usage?.speed ?? st.speed;
         st.stop = ev.delta?.stop_reason ?? st.stop;
         st.why  = ev.delta?.stop_details ?? st.why;
         st.container = ev.delta?.container?.id ?? st.container;
@@ -244,7 +247,8 @@ export namespace Anthropic {
     const out = st.blocks.filter((b) => b.type !== "text" || b.text);
     const ran = new Set(out.map((b) => b.tool_use_id));
     const open = out.some((b) => b.type === "server_tool_use" && !ran.has(b.id));
-    const step: Step = { out, uses, entries: Anthropic.entries(out, st.docs), stop: "done", why: "", open, container: st.container ?? undefined };
+    const served_speed = ask.speed === "fast" && st.speed === "standard" ? "slow" : undefined;
+    const step: Step = { out, uses, entries: Anthropic.entries(out, st.docs), stop: "done", why: "", open, container: st.container ?? undefined, served_speed };
     if (st.error !== null) {
       const stop = st.error.type === "rate_limit_error" ? "limit" : ["overloaded_error", "api_error"].includes(st.error.type) ? "busy" : "fail";
       return { ...step, stop, why: st.error.type + ": " + st.error.message };

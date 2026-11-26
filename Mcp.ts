@@ -24,7 +24,6 @@ type Started = {
 };
 
 // left: its tools left out (listed)
-// that
 type Told = {
   said  : string | null;
   left  : string;

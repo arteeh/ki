@@ -1,4 +1,4 @@
-import type { Block, End, Parked, Say } from "./AskAI.ts";
+import type { Block, End, Kind, Parked, Say } from "./AskAI.ts";
 import * as config from "./Config.ts";
 import { get, list as items, rec, text_of } from "./Json.ts";
 import * as Names from "./Names.ts";
@@ -18,8 +18,8 @@ export type Spawn = { task: string; role: Role; memory: boolean; mcp: boolean };
 type Spawned = Omit<Spawn, "task">;
 
 // starts: the app's own message that starts its turn (restarted.md), sent
-// in that turn only, never kept in its log (#223)
-export type Told = Say & { starts?: true };
+// before this log id, in that turn only, never kept in its log (#223)
+export type Told = Say & { starts?: number };
 
 // doing: what it does now, since at (a tool's name, thinking, a usage limit)
 // used: the tokens of its last request, when its log had used_at bytes of
@@ -102,8 +102,11 @@ export namespace Sub {
     return role.effort === null || model === undefined || Pick.offers(model, role.effort) ? null : Pick.no_effort(model, role.effort);
   }
 
-  export function old_role(note: string): Spawned | null {
-    const m = /^subagent(?: on (\S+))?(?: at effort (\S+))?( without view)?( without MCP tools)?$/.exec(note);
+  export function old_role(root: { i: number; kind: Kind; text: string } | undefined): Spawned | null {
+    if (root?.i !== 0 || root.kind !== "note") {
+      return null;
+    }
+    const m = /^subagent(?: on (\S+))?(?: at effort (\S+))?( without view)?( without MCP tools)?$/.exec(root.text);
     return m === null ? null : { role: { model: m[1] ?? null, effort: m[2] ?? null }, memory: m[3] === undefined, mcp: m[4] === undefined };
   }
 

@@ -48,10 +48,10 @@ import icon_apple from "./web/apple-touch-icon.png" with { type: "file" };
 import badge from "./web/badge.png" with { type: "file" };
 
 // agent: the chat a browser shows, by its agent's id
-type Sock = ServerWebSocket<{ who: string; tab: string; wire: string | null; host: string | null; work: string; scratch: string | null; shell: string | null; device: string | null; seen: Set<string>; active: number; agent: string }>;
+type Sock = ServerWebSocket<{ who: string; tab: string; wire: string | null; host: string | null; work: string; scratch: string | null; shell: string | null; device: string | null; seen: Set<string>; notes: Map<number, string[]>; active: number; agent: string }>;
 
 // where a chat's messages go: a link, or a page being made (#185)
-type To = { data: { seen: Set<string> }; send: (text: string) => unknown };
+type To = { data: { seen: Set<string>; notes: Map<number, string[]> }; send: (text: string) => unknown };
 
 type Body = { fh: fs.promises.FileHandle; size: number };
 
@@ -583,6 +583,9 @@ export namespace Chat {
   export async function ended(chat: Chat, end: End): Promise<boolean> {
     const main = chat.main;
     const halt = main.halt;
+    if (end.served_speed !== undefined) {
+      Chat.all(chat, { $: "note", text: "ran at " + end.served_speed + " speed" });
+    }
     if (end.ok) {
       chat.limits = null;
     }
@@ -744,7 +747,7 @@ export namespace Chat {
   export function aside(chat: Chat, text: string): void {
     const at = Memory.note(chat.mem, text);
     chat.noted = true;
-    Chat.all(chat, { $: "know", notes: { [at]: chat.mem.notes.get(at) ?? [] } });
+    chat.socks.forEach((sock) => Chat.noted_to(chat, sock, [at]));
   }
 
   // a message that comes while calls written before it have no result
@@ -1047,7 +1050,7 @@ export namespace Chat {
       tell    : (name, text) => Promise.resolve(Chat.tell(chat, name, text)),
       stop    : (name, why) => Chat.sub_stop(chat, name, Chat.name(chat) || "Ki", why),
       working : () => [...chat.subs.values()].filter((s) => s.run.busy).map((s) => s.name + " (" + Chat.sub_doing(s) + ")"),
-      show    : (name) => (chat.subs.has(name) || Memory.agent(chat.mem, name) !== null ? Memory.agent_show(chat.mem, name, true) : null),
+      show    : (name) => (chat.subs.has(name) || Memory.agent(chat.mem, name) !== null ? Memory.agent_show(chat.mem, name) : null),
     };
   }
 
@@ -1109,7 +1112,7 @@ export namespace Chat {
   }
 
   export function sub_role(chat: Chat, name: string, log: Root[]) {
-    return Sub.role(Memory.agent_role(chat.mem, name)) ?? (log[0]?.kind === "note" ? Sub.old_role(log[0].text) : null);
+    return Sub.role(Memory.agent_role(chat.mem, name)) ?? Sub.old_role(log[0]);
   }
 
   export async function sub_restart(chat: Chat, name: string): Promise<void> {
@@ -1122,7 +1125,7 @@ export namespace Chat {
     }
     const sub = Chat.sub_start(chat, how.role, how.memory, how.mcp, task, view, name);
     const told = Memory.agent_held(chat.mem, name);
-    void Run.takes(sub.run, [{ text: Prompts.prompt("restarted"), imgs: [], starts: true as const }, ...told.map((t) => ({ text: t, imgs: [] }))]);
+    void Run.takes(sub.run, [{ text: Prompts.prompt("restarted"), imgs: [], starts: (log.at(-1)?.i ?? -1) + 1 }, ...told.map((t) => ({ text: t, imgs: [] }))]);
   }
 
   export function sub_kind(chat: Chat, sub: () => Sub<Msg>): Run<Told, Msg>["kind"] {
@@ -1130,22 +1133,22 @@ export namespace Chat {
       pick   : () => Chat.sub_pick(chat, sub()),
       begin  : () => Tools.hold(chat.tools, sub().name),
       log    : (run, say) => {
-        if (say.starts === true) {
-          return { id: 0, end: 0, note: say.text };
+        if (say.starts !== undefined) {
+          return { id: say.starts, end: say.starts, note: say.text };
         }
         const msg = Chat.push(chat, run, "user", say.text, [], false, undefined, {}, true);
-        Memory.agent_held(chat.mem, run.name, run.queue.filter((x) => x.q.starts !== true).map((x) => x.q.text));
+        Memory.agent_held(chat.mem, run.name, run.queue.filter((x) => x.q.starts === undefined).map((x) => x.q.text));
         Main.team_soon();
         return msg;
       },
-      say    : (say) => ({ ...say, from: say.starts === true ? Prompts.sender("ki") : say.text.startsWith(JOB) ? Prompts.sender("job") : Chat.name(chat) || "Ki" }),
+      say    : (say) => ({ ...say, from: say.text.startsWith(JOB) ? Prompts.sender("job") : Chat.name(chat) || "Ki" }),
       queued : (run) => {
-        Memory.agent_held(chat.mem, run.name, run.queue.filter((x) => x.q.starts !== true).map((x) => x.q.text));
+        Memory.agent_held(chat.mem, run.name, run.queue.filter((x) => x.q.starts === undefined).map((x) => x.q.text));
         Chat.change(chat);
         Main.team_soon();
       },
       again  : () => false,
-      ask    : (_, take) => Chat.sub_ask(chat, sub(), take().find((m) => m.note !== undefined)?.note),
+      ask    : (_, take) => Chat.sub_ask(chat, sub(), take().find((m) => m.note !== undefined)),
       ended  : (_, end) => {
         Sub.ended(sub(), end);
         return end.ok;
@@ -1212,24 +1215,27 @@ export namespace Chat {
   }
 
   export function sub_bytes(root: Root): number {
-    return root.aside === true || (root.i === 0 && root.kind === "note") ? 0 : Memory.bytes(root.i + "|" + Memory.show(root)) + 2;
+    return Memory.agent_heard(root) ? Memory.bytes(root.i + "|" + Memory.show(root)) + 2 : 0;
   }
 
   // a chat's subagents share one prompt and one cache ("sub"): what is
   // each one's own, its name and folder, comes after the view
-  export function sub_ask(chat: Chat, sub: Sub<Msg>, note?: string): Ask {
-    const log = { text: Prompts.prompt("sub-folder", { Name: sub.name }) + "\n\n" + Memory.agent_show(chat.mem, sub.name) + "\n\n", mark: true };
+  export function sub_ask(chat: Chat, sub: Sub<Msg>, start?: Msg): Ask {
+    const log = Memory.agent(chat.mem, sub.name) ?? [];
+    const before = start === undefined ? log : log.filter((root) => root.i < start.id);
+    const after = start === undefined ? "" : Memory.agent_text(log.filter((root) => root.i >= start.id));
+    const history = { text: Prompts.prompt("sub-folder", { Name: sub.name }) + "\n\n" + Memory.agent_text(before) + "\n\n", mark: true };
     const agent = Team.get(chat.id);
     const own = agent === null ? "" : Prompts.prompt("sub-prompt", { prompt: Team.prompt(agent) });
-    const starter = note === undefined ? [] : [{ text: AskAI.labeled({ text: note, imgs: [], from: Prompts.sender("ki") }), mark: false }];
-    const blocks = [...sub.view, Tools.devices(chat.tools, chat.id, chat.mem.dir), Tools.skills(chat.tools), Tools.at_work(chat.tools, sub.name), log, ...starter];
+    const starter = start?.note === undefined ? [] : [{ text: AskAI.labeled({ text: start.note, imgs: [], from: Prompts.sender("ki") }), mark: false }];
+    const blocks = [...sub.view, Tools.devices(chat.tools, chat.id, chat.mem.dir), Tools.skills(chat.tools), Tools.at_work(chat.tools, sub.name), history, ...starter, ...(after === "" ? [] : [{ text: after, mark: false }])];
     const used = (tokens: number) => {
       [sub.used, sub.used_at] = [tokens, sub.bytes];
       Main.team_soon();
     };
     const pick = Chat.sub_pick(chat, sub);
     Chat.sub_picked(chat, sub, pick);
-    const fresh = !(Memory.agent(chat.mem, sub.name) ?? []).some((root) => root.kind === "tool" || root.kind === "reply");
+    const fresh = !log.some((root) => root.kind === "tool" || root.kind === "reply");
     return { ...Pick.ask(pick), system: Prompts.prompt("sub"), own, blocks, searches: SEARCHES, server: Tools.at(chat.tools, sub.name), agent: true, who: sub.name, used, minds: config.THINKING, fresh };
   }
 
@@ -1650,18 +1656,28 @@ export namespace Chat {
   // its restore
   export function resume(chat: Chat, work: string[]): void {
     const queued = chat.mem.queue.filter((post) => post.act === undefined || Owner.act_get(post.act) === null);
-    const posts: Pending[] = [...(work.includes(TURN) ? [{ kind: "note" as const, text: "", starter: "restarted" as const, images: [] }] : []), ...queued];
+    chat.mem.interrupted ||= work.includes(TURN);
     // its subagents go on even in an archive: their reports wait there
     for (const name of work.filter((w) => w !== TURN)) {
       void Chat.sub_restart(chat, name);
     }
     if (Chat.archived(chat)) {
-      chat.mem.held = [...posts, ...chat.mem.held];
+      chat.mem.held = [...queued, ...chat.mem.held];
       chat.mem.queue = [];
       Memory.save_queue(chat.mem);
       return;
     }
-    posts.forEach((post) => void Run.take(chat.main, post));
+    Chat.resume_main(chat, [...queued, ...chat.mem.held.splice(0)]);
+  }
+
+  export function resume_main(chat: Chat, posts: Pending[]): void {
+    const start = chat.mem.interrupted;
+    chat.mem.interrupted = false;
+    chat.mem.queue = [...chat.main.queue.map((x) => x.q), ...posts];
+    if (start || posts.length > 0) {
+      void Run.takes(chat.main, [...(start ? [{ kind: "note" as const, text: "", starter: "restarted" as const, images: [] }] : []), ...posts]);
+    }
+    Memory.save_queue(chat.mem);
   }
 
   export function timed(chat: Chat, retry = false): void {
@@ -1831,6 +1847,7 @@ export namespace Chat {
   export function join(chat: Chat, sock: Sock, replaced?: string): void {
     sock.data.agent = chat.id;
     sock.data.seen = new Set();
+    sock.data.notes = new Map();
     chat.socks.add(sock);
     Chat.greet(chat, sock, replaced);
   }
@@ -1847,7 +1864,7 @@ export namespace Chat {
   // the script element they are in
   export function opening(chat: Chat): string {
     const texts: string[] = [];
-    const to = { data: { seen: new Set<string>() }, send: (text: string) => texts.push(text) };
+    const to = { data: { seen: new Set<string>(), notes: new Map<number, string[]>() }, send: (text: string) => texts.push(text) };
     Chat.send(to, { $: "team", agents: Main.mates() });
     Chat.greet(chat, to);
     return "[" + texts.join(",").replaceAll("<", "\\u003c") + "]";
@@ -1882,7 +1899,7 @@ export namespace Chat {
         const asked = typeof msg.before === "number" ? msg.before : undefined;
         const before = asked ?? log?.length ?? 0;
         const from = Math.max(0, before - SHOWN);
-        const entries = (log ?? []).slice(from, before).map((root) => ({ id: root.i, kind: root.kind, ...Memory.shown_of(root), date: root.date, of: root.of, tool: root.tool, mind: root.mind }));
+        const entries = (log ?? []).slice(from, before).map((root) => ({ id: root.i, kind: root.kind, ...Memory.shown_of(root), date: root.date, of: root.of, tool: root.tool, mind: root.mind, ...(Sub.old_role(root) === null ? {} : { role: true as const }) }));
         Chat.send(sock, { $: "agent", name, found: log !== null, from, before: asked, entries, done: !chat.subs.has(name), how: Chat.sub_how(chat, name, log) });
         if (asked === undefined) {
           Chat.send(sock, { $: "live", agent: name, live: chat.subs.get(name)?.run.live ?? [] });
@@ -2103,11 +2120,13 @@ export namespace Chat {
   // a page of a message split in memory goes as the whole message, under
   // its first page's id, with how many pages it has (#151)
   export function teach(chat: Chat, sock: To, parts: Part[]): void {
+    const starts: number[] = [];
     for (const [id, n] of parts.filter(([id, n]) => !sock.data.seen.has(id + "+" + n))) {
       sock.data.seen.add(id + "+" + n);
       const [a, b] = n === 1 ? Memory.pages_of(chat.mem, id) : [0, 0];
       if (n === 1 && !sock.data.seen.has("whole " + a)) {
         sock.data.seen.add("whole " + a);
+        starts.push(a);
         const pages = Array.from({ length: b - a }, (_, k) => Memory.at(chat.mem, a + k));
         const m = pages[0];
         const said = Memory.shown_of({ text: pages.map((p) => p.text).join(""), result: m.result, lead: m.lead });
@@ -2116,14 +2135,18 @@ export namespace Chat {
       }
       Chat.know(chat, sock, id, n);
     }
-    Chat.noted_to(chat, sock, parts.flatMap(([id, n]) => (n === 1 ? [id] : [])));
+    Chat.noted_to(chat, sock, starts);
   }
 
   // the app's notes before messages the page shows whole (#223)
   export function noted_to(chat: Chat, sock: To, ids: number[]): void {
     const notes = Object.fromEntries(ids.flatMap((id) => {
       const texts = chat.mem.notes.get(id);
-      return texts === undefined ? [] : [[id, texts]];
+      if (texts === undefined || texts === sock.data.notes.get(id)) {
+        return [];
+      }
+      sock.data.notes.set(id, texts);
+      return [[id, texts]];
     }));
     if (Object.keys(notes).length > 0) {
       Chat.send(sock, { $: "know", notes });
@@ -2377,10 +2400,7 @@ export namespace Main {
   export function shelve(chat: Chat, on: boolean): Answer {
     Team.archive(chat.id, on);
     if (!on) {
-      const held = chat.mem.held.splice(0);
-      chat.mem.queue = [...chat.main.queue.map((x) => x.q), ...held];
-      Memory.save_queue(chat.mem);
-      held.forEach((post) => void Run.take(chat.main, post));
+      Chat.resume_main(chat, chat.mem.held.splice(0));
       Chat.timed(chat);
     }
     Main.chats.forEach((c) => Chat.change(c));
@@ -2676,7 +2696,7 @@ export namespace Main {
       if (p === "/ws") {
         const q    = new URL(req.url).searchParams;
         const who  = Owner.hash(Owner.token(req));
-        const data = { who, tab: q.get("tab") ?? "", wire: q.get("wire"), host: q.get("device"), work: q.get("work") ?? "~/.ki/work", scratch: q.get("scratch"), shell: q.get("shell") === "PowerShell" ? "PowerShell" : null, device: null, seen: new Set<string>(), active: 0, agent: Main.chat_of(q.get("agent")).id };
+        const data = { who, tab: q.get("tab") ?? "", wire: q.get("wire"), host: q.get("device"), work: q.get("work") ?? "~/.ki/work", scratch: q.get("scratch"), shell: q.get("shell") === "PowerShell" ? "PowerShell" : null, device: null, seen: new Set<string>(), notes: new Map<number, string[]>(), active: 0, agent: Main.chat_of(q.get("agent")).id };
         return server.upgrade(req, { data }) ? undefined : new Response("upgrade failed", { status: 400 });
       }
       return await Main.page(p, req);

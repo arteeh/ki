@@ -49,7 +49,7 @@ type Saved = Kept & { seen?: Kept; main: End; tree: End; pick: object | null; go
 
 // main: the run's inbox, as it was last; held: what came for an archived
 // agent, delivered on its restore
-type Queues = { main: Pending[]; held: Pending[] };
+type Queues = { main: Pending[]; held: Pending[]; interrupted?: boolean };
 
 type Rec = { i?: number; l?: number; act?: string; ans?: object };
 
@@ -85,6 +85,7 @@ type Chosen = {
 type Unlogged = {
   queue  : Pending[];
   held   : Pending[];
+  interrupted: boolean;
 };
 
 type Tree = {
@@ -160,7 +161,7 @@ export namespace Memory {
   export function load(dir: string, share: Memory["share"], acted: Memory["acted"] = () => {}): Memory {
     fs.mkdirSync(dir, { recursive: true });
     const mem: Memory = {
-      dir, fds: new Map(), count: 0, open: 0, notes: new Map(), pick: null, goal: null, talk: null, leader: false, lines: LINES, talked: new Map(), used: null, used_at: 0, work: [], timers: [], hop: 0, origin: null, queue: [], held: [], nodes: new Map(), ready: [[], []], ends: { main: [0, 0], tree: [0, 0] },
+      dir, fds: new Map(), count: 0, open: 0, notes: new Map(), pick: null, goal: null, talk: null, leader: false, lines: LINES, talked: new Map(), used: null, used_at: 0, work: [], timers: [], hop: 0, origin: null, queue: [], held: [], interrupted: false, nodes: new Map(), ready: [[], []], ends: { main: [0, 0], tree: [0, 0] },
       view: { parts: [], size: 0, batch: false, high: VIEW_HIGH }, seen: { parts: [], size: 0, batch: false, high: config.COMPACTOR_CONTEXT },
       busy: new Map(), sides: new Map(), calls: new Map(), whole: new Map(), hold: [null, "paused"], done: false, wait: new Set(), share, acted, again: null,
     };
@@ -179,6 +180,7 @@ export namespace Memory {
     const queues = Memory.queues(dir);
     mem.queue = queues.main;
     mem.held = queues.held;
+    mem.interrupted = queues.interrupted === true;
     mem.ends.main = Memory.index(mem, "main", saved?.main ?? [0, 0]);
     mem.ends.tree = Memory.index(mem, "tree", saved?.tree ?? [0, 0]);
     mem.count = fs.statSync(dir + "/main.index").size / SLOT;
@@ -187,7 +189,7 @@ export namespace Memory {
     }
     mem.used_at = saved?.used_at ?? mem.count;
     if (fs.existsSync(dir + NOTES)) {
-      for (const note of fs.readFileSync(dir + NOTES, "utf8").split("\n").map((line) => Memory.parse(line, dir + NOTES))) {
+      for (const note of Memory.lines(dir + NOTES)) {
         const [at, text] = [get(note, "at"), get(note, "text")];
         if (typeof at === "number" && typeof text === "string") {
           mem.notes.set(at, [...(mem.notes.get(at) ?? []), text]);
@@ -228,7 +230,9 @@ export namespace Memory {
   export function queues(dir: string): Queues {
     try {
       const got = JSON.parse(fs.readFileSync(dir + "/queue.json", "utf8")) as Partial<Queues>;
-      return { main: got.main ?? [], held: got.held ?? [] };
+      const [main, held] = [got.main ?? [], got.held ?? []];
+      const interrupted = got.interrupted === true || [...main, ...held].some((post) => post.kind === "note" && (post.starter === "restarted" || post.text === Prompts.prompt("restarted")));
+      return { main: main.filter((post) => post.kind !== "note"), held: held.filter((post) => post.kind !== "note"), interrupted };
     } catch {
       return { main: [], held: [] };
     }
@@ -236,7 +240,9 @@ export namespace Memory {
 
   export function save_queue(mem: Memory): void {
     const file = mem.dir + "/queue.json";
-    fs.writeFileSync(file + ".new", JSON.stringify({ main: mem.queue, held: mem.held }));
+    const posts = (queue: Pending[]) => queue.filter((post) => post.kind !== "note");
+    const state: Queues = { main: posts(mem.queue), held: posts(mem.held), ...(mem.interrupted ? { interrupted: true } : {}) };
+    fs.writeFileSync(file + ".new", JSON.stringify(state));
     move_over(file + ".new", file);
     void Disk.wrote(file);
   }
@@ -337,11 +343,15 @@ export namespace Memory {
   }
 
   export function file(file: string): Root[] {
+    return Memory.lines(file) as Root[];
+  }
+
+  export function lines(file: string): unknown[] {
     const data = fs.readFileSync(file, "utf8");
     if (data !== "" && !data.endsWith("\n")) {
-      fs.appendFileSync(file, "\n");
+      Memory.append(file, [""]);
     }
-    return data.split("\n").flatMap((line) => (Memory.parse(line, file) as Root | null) ?? []);
+    return data.split("\n").flatMap((line) => Memory.parse(line, file) ?? []);
   }
 
   export function parse(line: string, file: string): unknown {
@@ -1406,9 +1416,18 @@ export namespace Memory {
     return (fs.existsSync(mem.dir + AGENTS) ? fs.readdirSync(mem.dir + AGENTS) : []).filter((f) => /^[A-Za-z]+\.jsonl$/.test(f)).map((f) => f.slice(0, -".jsonl".length));
   }
 
-  // dated: each message with when it was sent, as a zoom shows it (#217)
-  export function agent_show(mem: Memory, name: string, dated = false): string {
-    return Memory.agent(mem, name)?.filter((root) => root.aside !== true && (root.i !== 0 || root.kind !== "note")).map((root) => root.i + (dated ? " · " + Memory.when(root.date) : "") + "|" + Memory.show(root)).join("\n\n") ?? "No agent " + name + ".";
+  export function agent_show(mem: Memory, name: string): string {
+    const log = Memory.agent(mem, name);
+    return log === null ? "No agent " + name + "." : Memory.agent_text(log, true);
+  }
+
+  // before 50, the role and operational notices were all plain notes
+  export function agent_heard(root: Root): boolean {
+    return root.kind !== "note" && root.aside !== true;
+  }
+
+  export function agent_text(log: Root[], dated = false): string {
+    return log.filter(Memory.agent_heard).map((root) => root.i + (dated ? " · " + Memory.when(root.date) : "") + "|" + Memory.show(root)).join("\n\n");
   }
 
 }

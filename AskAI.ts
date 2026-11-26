@@ -87,6 +87,7 @@ export type End = {
   ok     : boolean;
   text   : string;
   why?   : string;
+  served_speed?: string;
   stop?  : "fail" | "lost" | "down";
   off?   : boolean;
   acted? : boolean;

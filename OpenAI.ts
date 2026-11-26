@@ -11,7 +11,7 @@ type Fail = { code?: string; message?: string } | null;
 
 type Usage = { input_tokens?: unknown; input_tokens_details?: { cached_tokens?: number; cache_write_tokens?: unknown } };
 
-type Res = { status?: string; error?: Fail; output?: Output[]; usage?: Usage; incomplete_details?: { reason?: string } };
+type Res = { status?: string; error?: Fail; output?: Output[]; usage?: Usage; service_tier?: string; incomplete_details?: { reason?: string } };
 
 export type Event = { type: string; delta?: string; item?: Output; item_id?: string; response?: Res; error?: Fail; code?: string; message?: string; summary_index?: number; output_index?: number };
 
@@ -169,7 +169,9 @@ export namespace OpenAI {
     const calls = out.filter((o) => o.type === "function_call");
     const uses: Use[] = calls.map((o) => ({ id: o.call_id ?? "", name: o.name ?? "", input: Agent.parse(o.arguments ?? "") }));
     const refusals = out.flatMap((o) => (o.type === "message" ? o.content ?? [] : [])).filter((c) => c.type === "refusal");
-    const step: Step = { out, uses, entries: out.flatMap(OpenAI.entries), stop: "done", why: "" };
+    const ran = res.service_tier === "priority" ? "fast" : Object.keys(TIERS).find((speed) => TIERS[speed] === res.service_tier);
+    const served_speed = ask.vendor === "openai-api" && ran !== ask.speed ? ran : undefined;
+    const step: Step = { out, uses, entries: out.flatMap(OpenAI.entries), stop: "done", why: "", served_speed };
     if (res.status === "failed") {
       const stop = res.error?.code === "server_error" ? "busy" : res.error?.code === "rate_limit_exceeded" ? "limit" : "fail";
       return { ...step, stop, why: res.error?.message ?? "failed" };
