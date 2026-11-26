@@ -130,8 +130,8 @@ const IMPORT = {
   found : new Map<string, Read>(),
   done  : {} as Import.Done,
   off   : new Set<string>(),
-  step  : "" as "" | "start" | "send" | "run" | "seen" | "done",
-  // the agent it goes into: the one whose settings (or first chat) opened it
+  step  : "" as "" | "send" | "run" | "seen" | "done",
+  // the agent it goes into: the one whose settings opened it
   agent : "",
   asks  : 0,
 };
@@ -722,7 +722,7 @@ function click(ev: MouseEvent): void {
   const { act: a, go: path } = el.dataset;
   const text = el.dataset.copy;
   if (el.classList.contains("imp")) {
-    void import_open(FORM.exec(location.pathname)?.[2] ?? v.agent, false);
+    void import_open(FORM.exec(location.pathname)?.[2] ?? v.agent);
     return;
   }
   if (path !== undefined) {
@@ -1042,7 +1042,6 @@ function hear(msg: View.Server): void {
   if (msg.$ === "state") {
     renew_due(msg.build);
   }
-  void import_welcome();
   draw(true);
   clearTimeout(P.copy);
   P.copy = setTimeout(copy_keep, COPY_AFTER) as unknown as number;
@@ -1068,16 +1067,12 @@ function importer(): void {
     pick.onclick = () => zip.click();
     pick.title = "From the website: " + Import.EXPORTS[src.dataset.app ?? ""] + ", which emails you a zip.";
   }
-  $(".into").onclick = () => {
-    IMPORT.step = "";
-    import_draw("");
-  };
   $("#import").onclick = (ev) => (ev.target as HTMLElement).closest(".skip") && $("#import").hidePopover();
   $("#import .prog .sub").textContent = Import.MIDWAY;
   $("#import .flow").onclick = import_flow;
   $("#import").ontoggle = (ev) => {
     if (ev.newState === "closed") {
-      IMPORT.step = IMPORT.step === "start" || IMPORT.step === "done" ? "" : IMPORT.step;
+      IMPORT.step = IMPORT.step === "done" ? "" : IMPORT.step;
     }
     import_draw("");
   };
@@ -1134,7 +1129,7 @@ function import_flow(): void {
 
 // only the last asked opens, and only while its agent's page is open; for
 // another agent than the last, afresh
-async function import_open(agent: string, first: boolean): Promise<void> {
+async function import_open(agent: string): Promise<void> {
   const ask = ++IMPORT.asks;
   const done = (await fetch("/api/imported?agent=" + encodeURIComponent(agent)).then((res) => res.json()).catch(() => ({}))) as Import.Done;
   if (ask !== IMPORT.asks || agent !== v.agent) {
@@ -1148,8 +1143,7 @@ async function import_open(agent: string, first: boolean): Promise<void> {
     BACK.value = "0";
   }
   IMPORT.done = done;
-  $("#import form .skip").textContent = first ? "Start fresh" : "Close";
-  IMPORT.step = first ? "start" : IMPORT.step === "done" || IMPORT.agent !== agent ? "" : IMPORT.step;
+  IMPORT.step = IMPORT.step === "done" || IMPORT.agent !== agent ? "" : IMPORT.step;
   IMPORT.agent = agent;
   import_draw("");
   $("#import").showPopover();
@@ -1165,15 +1159,6 @@ function import_took(into: Map<string, Read>, name: string, read: Read, status: 
   BACK.min = "0";
   BACK.value = "0";
   import_draw(status);
-}
-
-async function import_welcome(): Promise<void> {
-  await INTRO;
-  const key = kept("welcomed");
-  if (localStorage.getItem(key) === null && v.pick !== null && v.parts.length === View.OPENING && v.importing === null && DESK.matches) {
-    localStorage.setItem(key, "1");
-    void import_open(v.agent, true);
-  }
 }
 
 function import_send(): void {
@@ -1222,8 +1207,7 @@ function import_bar(): boolean {
   const part  = run === null ? Number(done) : run.done / Math.max(1, run.total);
   const why   = Boolean(run?.why);
   const said  = run !== null ? View.progress_show(run) : done ? Import.DONE : IMPORT.step === "send" ? "Sending…" : "Starting…";
-  $("#import .start").hidden = IMPORT.step !== "start";
-  $("#import form").hidden = going || IMPORT.step === "start";
+  $("#import form").hidden = going;
   $("#import .prog").hidden = !going;
   $("#import .prog .title").textContent = done ? "Memory tree built" : "Building your memory tree";
   $("#import progress", HTMLProgressElement).value = part;
@@ -2677,37 +2661,32 @@ function toast(text: string, stay = false, act?: [string, () => void]): void {
   P.toast = stay ? 0 : (setTimeout(() => (el.hidden = true), 7000) as unknown as number);
 }
 
-function intro_play(): Promise<void> {
+function intro_play(): void {
   const skip = new URLSearchParams(location.search).has("skip");
   if (localStorage.getItem("ki.intro") !== null || skip) {
-    return Promise.resolve();
+    return;
   }
   localStorage.setItem("ki.intro", "1");
   const el = document.createElement("div");
-  return new Promise((gone) => {
-    function end(): void {
-      removeEventListener("keydown", end);
-      el.classList.add("out");
-      el.ontransitionend = () => {
-        el.remove();
-        gone();
-      };
-      if (DESK.matches) {
-        BOX.focus();
-      }
+  function end(): void {
+    removeEventListener("keydown", end);
+    el.classList.add("out");
+    el.ontransitionend = () => el.remove();
+    if (DESK.matches) {
+      BOX.focus();
     }
-    el.id = "intro";
-    el.innerHTML = SCENES;
-    el.onclick = end;
-    el.onanimationend = (ev) => {
-      if (ev.target === el) {
-        end();
-      }
-    };
-    addEventListener("keydown", end);
-    document.documentElement.append(el);
-  });
+  }
+  el.id = "intro";
+  el.innerHTML = SCENES;
+  el.onclick = end;
+  el.onanimationend = (ev) => {
+    if (ev.target === el) {
+      end();
+    }
+  };
+  addEventListener("keydown", end);
+  document.documentElement.append(el);
 }
 
-const INTRO = intro_play();
+intro_play();
 void boot();

@@ -170,7 +170,7 @@ const BUFFER     = 2 ** 31 - 1;
 const OWN        = ["/ws"];
 
 const HELLO      = hello_md.trim().replace("{install}", install_cmd(false));
-const HELLO_LINE = "reply: hello: Ki, one endless chat kept in a memory tree, recent days in more detail; build anything for years; recalls the past (ad2cat.py); a chatbot with a memory system; ki device on the user's computers.";
+const HELLO_LINE = "reply: hello: Ki, one endless chat kept in a memory tree, recent days in more detail; build anything for years; recalls the past (ad2cat.py); a chatbot with a memory system; past ChatGPT and Claude chats importable in its settings; ki device on the user's computers.";
 
 // the site's page, index.html: imported as a file, a path (Bun's types
 // take any .html for an HTML bundle)

@@ -361,8 +361,6 @@ body:is(.account, .tree) footer > :not(#toast) { display: none; }
 #import .acts :is(.go, .pickdir) { background: var(--ink); color: var(--paper); }
 @media (hover: hover) { #import .acts :is(.go, .pickdir):hover { background: var(--ink); opacity: .85; } } @media (hover: none) { #import .acts :is(.go, .pickdir):active { background: var(--ink); opacity: .85; } }
 #import .acts .pickdir.alt { background: var(--block); color: var(--ink); }
-#import .two { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-#import .two button { min-height: 64px; padding: 10px 16px; font-size: 15px; white-space: normal; }
 #import button:disabled { opacity: 0.4; cursor: default; }
 progress { --track: var(--block); --bar: var(--ink); display: block; width: 100%; height: 6px; margin: 14px 0 6px; appearance: none; border: 0; border-radius: 3px; background: var(--track); overflow: hidden; }
 progress::-webkit-progress-bar { background: var(--track); }
@@ -373,7 +371,6 @@ header .imping { display: flex; flex-direction: column; justify-content: center;
 .imping.why progress { --bar: var(--mid); }
 @media (pointer: fine) { #import .phone { display: none; } }
 @media not (pointer: fine) { #import .desk { display: none; } }
-@media (max-width: 420px) { #import .two { grid-template-columns: 1fr; } }
 
 /* the footer's height (--foot), less its 1px below the screen and the 12px
    of the chat it covers; --whole, set on #log alone, restyles nothing in it */

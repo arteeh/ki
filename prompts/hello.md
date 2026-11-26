@@ -16,6 +16,8 @@ I'll remember:
 
 How? No new model. No magic. Just a regular chatbot with a neat memory system.
 
+Coming from ChatGPT or Claude? Import your past chats into my memory in my settings.
+
 I can also work on your computers: install ki there and run `ki device`.
 
 ```

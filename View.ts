@@ -46,8 +46,6 @@ export type Progress = { done: number; total: number; why: string | null; msgs: 
 
 const PACE = 1e-4;
 
-export const OPENING = 1;
-
 // Leader mode's lines per agent: the default, the most (#168)
 export const LINES = 6;
 export const LINES_MOST = 30;
